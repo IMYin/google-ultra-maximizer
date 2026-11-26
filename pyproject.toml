@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "google-ultra-maximizer"
+version = "2.3.0"
+description = "Zero-reinvented-wheels control plane and live 7-pool telemetry cockpit to maximize 100% of a Google AI Ultra subscription."
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.11"
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/IMYin/google-ultra-maximizer"
+Repository = "https://github.com/IMYin/google-ultra-maximizer"
+Issues = "https://github.com/IMYin/google-ultra-maximizer/issues"
+
+[project.optional-dependencies]
+notify = ["apprise>=1.9.0"]
+
+[project.scripts]
+ultra = "fleet_hub.cli_entry:main"
+fleet = "fleet_hub.cli_entry:main"
+
+[tool.setuptools.packages.find]
+include = ["fleet_hub*"]

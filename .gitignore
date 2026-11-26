@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+*.sqlite
+*.sqlite-*
+state/
+logs/
+ai-projects-fallback/
+.env
+secrets.env
+*.secrets.env
+.DS_Store
+*.egg-info/
+dist/
+build/
