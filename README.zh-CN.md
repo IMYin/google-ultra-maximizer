@@ -1,8 +1,16 @@
-# Google AI Ultra Maximizer (`Fleet-Hub v2.2`)
+# Google AI Ultra Maximizer (`Fleet-Hub v2.3`)
 
-**一套零冗余轮子、内置 5-Bot AI 部门一键包、支持跨池自动调度与 `<15ms` 极速遥测的开源控制底座，帮你把 Google AI Ultra（或 Pro）套餐里的每一块独立算力额度真正「吃干抹净」。**
+**一套零冗余轮子、与 `T3 Code` 双核协同、支持 `<15ms` 极速 7 池遥测与无头 GCP 赠金账本读取的开源控制底座，帮你把 Google AI Ultra（或 Pro）套餐里的每一块独立算力额度真正「吃干抹净」。**
 
 [English README](./README.md) · [从零搭建完整教程](./docs/SETUP-FROM-SCRATCH.md) · [系统架构](./docs/ARCHITECTURE.md) · [领域词汇表 GLOSSARY](./GLOSSARY.md) · [Matt Pocock 工程技能手册](./docs/MATTPOCOCK-SKILLS-PLAYBOOK.md)
+
+![Google AI Ultra Maximizer 架构主视觉](./docs/assets/hero-banner.png)
+
+### 实机驾驶舱动态演示（已开启 `?privacy=1` 隐私脱敏）
+
+> 10 秒看懂核心能力：**7 池实时遥测与 5h 智能路由** → **无头读取 GCP 赠金扣费明细** → **T3 Code 一键配对与开源栈** → **\$10 / \$50 / \$100 快速校准弹窗** → **极夜暗色 / 暖白双主题切换**
+
+![实机驾驶舱动态演示](./docs/assets/cockpit-demo-zh.gif)
 
 ---
 

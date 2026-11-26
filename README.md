@@ -1,8 +1,16 @@
-# Google AI Ultra Maximizer (`Fleet-Hub v2.2`)
+# Google AI Ultra Maximizer (`Fleet-Hub v2.3`)
 
-**A zero-reinvented-wheels control plane, AI department pack, and precision telemetry cockpit engineered to extract 100% of every independent quota pool inside a Google AI Ultra (or Pro) subscription.**
+**A zero-reinvented-wheels control plane and `<15ms` precision telemetry cockpit engineered to extract 100% of every independent quota pool inside a Google AI Ultra (or Pro) subscription.**
 
 [English](./README.md) · [简体中文完整文档](./README.zh-CN.md) · [Zero-to-Production Setup](./docs/SETUP-FROM-SCRATCH.md) · [Architecture](./docs/ARCHITECTURE.md) · [Domain Glossary](./GLOSSARY.md)
+
+![Google AI Ultra Maximizer Hero Architecture](./docs/assets/hero-banner.png)
+
+### Live Cockpit Walkthrough (`?privacy=1`)
+
+> 5 scenes in 10 seconds: **7-Pool Live Telemetry & 5h Harvest Verdict** → **Headless GCP Credits Breakdown** → **T3 Code + Open-Source Wheels** → **Quick Credit Calibration Modal** → **Obsidian Dark / Editorial Light Dual Theme**
+
+![Live Cockpit Walkthrough](./docs/assets/cockpit-demo-en.gif)
 
 ---
 
