@@ -14,7 +14,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 import unittest
@@ -278,8 +278,36 @@ class TestFleetHub(unittest.TestCase):
         }
         snap = parse_user_status_snapshot(sample_us, ls_version="2.35.1")
         self.assertEqual(snap["gemini_weekly"]["remaining_pct"], 22.6)
+        self.assertFalse(snap["gemini_weekly"]["is_rolling_5h"])
         self.assertEqual(snap["claude_rolling_5h"]["remaining_pct"], 100.0)
         self.assertEqual(mask_email("alice@example.com", privacy=True), "a***@example.com")
+
+        # Full AI Ultra plan: Gemini 4 & Orchestrator also reset on a 5h rolling clock
+        reset_5h = (datetime.now(timezone.utc) + timedelta(hours=4, minutes=55)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        full_ultra_us = {
+            "email": "demo@example.com",
+            "userTier": {"name": "Google AI Ultra"},
+            "cascadeModelConfigData": {
+                "clientModelConfigs": [
+                    {
+                        "label": "Gemini 4 Neon (High)",
+                        "quotaInfo": {"remainingFraction": 0.998, "resetTime": reset_5h},
+                    },
+                    {
+                        "label": "Orchestrator (Neon)",
+                        "quotaInfo": {"remainingFraction": 0.998, "resetTime": reset_5h},
+                    },
+                    {
+                        "label": "Claude Opus 5.5 (High)",
+                        "quotaInfo": {"remainingFraction": 1.0, "resetTime": reset_5h},
+                    },
+                ]
+            },
+        }
+        snap_ultra = parse_user_status_snapshot(full_ultra_us, ls_version="2.35.2")
+        self.assertTrue(snap_ultra["gemini_weekly"]["is_rolling_5h"])
+        self.assertEqual(snap_ultra["claude_rolling_5h"]["remaining_pct"], 100.0)
+        self.assertNotIn("Orchestrator (Neon)", snap_ultra["claude_rolling_5h"]["families"])
 
         cards = [
             {"pool": "agy_gemini_weekly", "pct": 22.6, "meta": {"reset_text": "4天后重置"}},

@@ -23,8 +23,29 @@ def build_burn_recommendations(
     c5 = by_pool.get("agy_claude_5h") or {}
     gem_pct = gem.get("pct")
     c5_pct = c5.get("pct")
+    gem_meta = gem.get("meta") or {}
+    gem_is_5h = bool(
+        gem_meta.get("is_rolling_5h")
+        or (isinstance(gem_meta.get("hours_left"), (int, float)) and float(gem_meta["hours_left"]) <= 8.5)
+    )
 
-    if isinstance(c5_pct, (int, float)) and c5_pct >= 50.0:
+    if gem_is_5h and isinstance(gem_pct, (int, float)) and isinstance(c5_pct, (int, float)) and (gem_pct >= 50.0 or c5_pct >= 50.0):
+        reset_txt = ((c5.get("meta") or {}).get("reset_text")) or "5小时内重置"
+        hours_left = (c5.get("meta") or {}).get("hours_left")
+        reset_en = f"{hours_left:.1f}h reset" if isinstance(hours_left, (int, float)) else "5h rolling reset"
+        advice.append(
+            {
+                "severity": "opportunity",
+                "pool": "AI Ultra 双 5h 滚动池",
+                "pool_en": "AI Ultra Dual 5h Pools",
+                "title": f"双 5h 滚动池满血（Gemini 4 {gem_pct:.0f}% · Claude 5.5 {c5_pct:.0f}%，{reset_txt}）",
+                "title_en": f"Dual 5h Rolling Pools Ready (Gemini 4 {gem_pct:.0f}% · Claude 5.5 {c5_pct:.0f}% · {reset_en})",
+                "action": "已解锁最高档双 5h 滚动池：在 T3 Code 里可并行跑 Gemini 4 Neon/Carbon 与 Claude Opus 5.5，每 5 小时各自回满。",
+                "action_en": "Both Gemini 4 and Claude 5.5 refresh every 5 hours independently—run heavy parallel coding threads in T3 Code.",
+                "command": "ultra wakeup",
+            }
+        )
+    elif isinstance(c5_pct, (int, float)) and c5_pct >= 50.0:
         gem_note = f"（当前 Gemini 周池仅剩 {gem_pct:.1f}%）" if isinstance(gem_pct, (int, float)) and gem_pct < 45.0 else ""
         gem_note_en = f" (Gemini Weekly only {gem_pct:.1f}% left)" if isinstance(gem_pct, (int, float)) and gem_pct < 45.0 else ""
         reset_txt = ((c5.get("meta") or {}).get("reset_text")) or "5小时内重置"
@@ -37,8 +58,8 @@ def build_burn_recommendations(
                 "pool_en": "Claude 5.5 5h Rolling Pool",
                 "title": f"Claude Opus / Sonnet 5.5 还有 {c5_pct:.0f}% 空转（{reset_txt}）{gem_note}",
                 "title_en": f"Claude Opus / Sonnet 5.5 is {c5_pct:.0f}% idle ({reset_en}){gem_note_en}",
-                "action": "立即把编码、Review、重构线程在 OpenMausBot（单 Bot 模型选择器）、T3 Code 或 Antigravity 切换到 Claude Opus 5.5，零损耗保护 Gemini 周池。",
-                "action_en": "Switch coding, reviews, and idle bots in OpenMausBot / T3 Code / Antigravity to Claude 5.5 to protect Gemini Weekly.",
+                "action": "立即把编码、Review、重构线程在 T3 Code 或 Antigravity 切换到 Claude Opus 5.5，零损耗保护 Gemini 周池。",
+                "action_en": "Switch coding, reviews, and threads in T3 Code / Antigravity to Claude 5.5 to protect Gemini Weekly.",
                 "command": "ultra wakeup",
             }
         )
@@ -218,15 +239,28 @@ def compute_routing_verdict(
     if isinstance(eg, dict) and isinstance(eg.get("days_left"), int) and eg["days_left"] <= 21 and float(eg.get("remaining") or 0) >= 1.0:
         expiring_pools.append(f"gcp_grant (${float(eg['remaining']):.2f}, {eg['days_left']}d left)")
 
-    if c5_val is not None and c5_val >= 40.0 and (gem_val is None or gem_val < 55.0):
+    gem_meta = gem.get("meta") or {}
+    gem_is_5h = bool(
+        gem_meta.get("is_rolling_5h")
+        or (isinstance(gem_meta.get("hours_left"), (int, float)) and float(gem_meta["hours_left"]) <= 8.5)
+    )
+    if gem_is_5h and gem_val is not None and gem_val >= 40.0 and c5_val is not None and c5_val >= 40.0:
+        mode = "balanced"
+        coding_model = "antigravity/claude-opus-5-5"
+        triage_model = "antigravity/gemini-4-neon"
+        headline_zh = f"AI Ultra 双 5h 滚动池全开（Gemini 4 {gem_val:.0f}% · Claude 5.5 {c5_val:.0f}%）"
+        headline_en = f"AI Ultra Dual 5h Rolling Active (Gemini 4 {gem_val:.0f}% · Claude 5.5 {c5_val:.0f}%)"
+        reason_zh = "两个主池均每 5 小时独立刷新：T3 Code 可自由并行使用 Claude Opus 5.5 与 Gemini 4 Neon/Carbon。"
+        reason_en = "Both Gemini 4 and Claude 5.5 refresh every 5 hours independently—run heavy parallel threads in T3 Code."
+    elif c5_val is not None and c5_val >= 40.0 and (gem_val is None or gem_val < 55.0):
         mode = "5h_harvest"
         coding_model = "antigravity/claude-opus-5-5"
         triage_model = "antigravity/claude-sonnet-5-5"
         gem_txt = f"{gem_val:.1f}%" if gem_val is not None else "n/a"
         headline_zh = f"优先切入 Claude 5.5 5h 滚动池（当前 {c5_val:.0f}% 空转 · Gemini 周池 {gem_txt}）"
         headline_en = f"Route to Claude 5.5 5h Pool ({c5_val:.0f}% idle · Gemini Weekly {gem_txt})"
-        reason_zh = "5 小时池自动高频刷新且不消耗 Gemini 周池；建议将闲置 Bot 与编码线程全部路由到 Claude Opus/Sonnet 5.5。"
-        reason_en = "5h rolling quota resets multiple times daily without touching Gemini Weekly; route idle bots & coding threads to Claude 5.5."
+        reason_zh = "5 小时池自动高频刷新且不消耗 Gemini 周池；建议将编码线程全部路由到 Claude Opus/Sonnet 5.5。"
+        reason_en = "5h rolling quota resets multiple times daily without touching Gemini Weekly; route coding threads to Claude 5.5."
     elif c5_val is not None and c5_val >= 25.0:
         mode = "balanced"
         coding_model = "antigravity/claude-opus-5-5"
@@ -239,18 +273,18 @@ def compute_routing_verdict(
         mode = "conserve_weekly"
         coding_model = "antigravity/gemini-3.8-flash"
         triage_model = "antigravity/gemini-3.8-flash"
-        headline_zh = f"周池警戒（Gemini 仅剩 {gem_val:.1f}%）· 建议切 Codex / 外部池或等待 5h 重置"
-        headline_en = f"Weekly Pool Low ({gem_val:.1f}%) · Prefer Codex / Paid Batch or Wait 5h Reset"
-        reason_zh = "Gemini 周池与 5h 池均偏低；轻量任务切 Flash，重度编码可路由至 Codex 或等待下一轮 5h 窗口。"
+        headline_zh = f"主池警戒（Gemini 仅剩 {gem_val:.1f}%）· 建议切 Codex / 外部池或等待 5h 重置"
+        headline_en = f"Primary Pool Low ({gem_val:.1f}%) · Prefer Codex / Paid Batch or Wait 5h Reset"
+        reason_zh = "Gemini 与 5h 池当前余量均偏低；轻量任务切 Flash，重度编码可路由至 Codex 或等待下一轮 5h 窗口。"
         reason_en = "Both Antigravity buckets are constrained; route lightweight triage to Flash or heavy coding to Codex until the next 5h reset."
     else:
         mode = "balanced"
         coding_model = "antigravity/gemini-4-neon"
         triage_model = "antigravity/gemini-3.8-flash"
         headline_zh = "使用 Gemini 4 主池（5h 池冷却中）"
-        headline_en = "Use Gemini 4 Weekly Pool (5h pool cooling)"
-        reason_zh = "5h 滚动池当前余量较少，重度架构可暂用 Gemini 4 周池并留意重置倒计时。"
-        reason_en = "5h rolling window is low; use Gemini 4 Weekly until the next 5h reset."
+        headline_en = "Use Gemini 4 Primary Pool (Claude 5h cooling)"
+        reason_zh = "Claude 5h 滚动池当前余量较少，重度架构可暂用 Gemini 4 主池并留意重置倒计时。"
+        reason_en = "Claude 5h rolling window is cooling; use Gemini 4 until the next 5h reset."
 
     d7_usd = float((lens_stats or {}).get("d7_usd") or 0.0)
     roi_x = round(d7_usd / 249.99, 2) if d7_usd > 0 else 0.0

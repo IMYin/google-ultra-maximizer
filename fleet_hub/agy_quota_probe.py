@@ -109,7 +109,7 @@ def _is_claude_or_oss_bucket(label: str, hours_to_reset: float | None) -> bool:
     low = label.lower()
     if any(k in low for k in ("claude", "gpt", "oss")):
         return True
-    if hours_to_reset is not None and hours_to_reset <= 8.0 and "gemini" not in low:
+    if hours_to_reset is not None and hours_to_reset <= 8.0 and "gemini" not in low and "orchestrator" not in low:
         return True
     return False
 
@@ -163,6 +163,7 @@ def parse_user_status_snapshot(user_status: dict[str, Any], ls_version: str = ""
             "reset_time": rep["reset_time"],
             "reset_text": rep["reset_text"],
             "hours_left": rep["hours_left"],
+            "is_rolling_5h": bool(rep["hours_left"] is not None and rep["hours_left"] <= 8.5),
             "families": families[:5],
             "model_count": len(models),
         }
@@ -284,15 +285,22 @@ def probe_antigravity_quotas(db: FleetDB, privacy: bool = False) -> tuple[list[d
 
     cards: list[dict[str, Any]] = []
     gw = snap.get("gemini_weekly")
+    gem_is_5h = False
     if isinstance(gw, dict):
         rem = float(gw["remaining_pct"])
+        gem_is_5h = bool(
+            gw.get("is_rolling_5h")
+            or (isinstance(gw.get("hours_left"), (int, float)) and float(gw["hours_left"]) <= 8.5)
+        )
         tone = "warn" if rem < 20.0 else "live"
         reset_en = f"{gw['hours_left']:.1f}h reset" if isinstance(gw.get("hours_left"), (int, float)) else str(gw.get("reset_text") or "")
+        gw_title = f"Antigravity · Gemini 4 5h 滚动主池 ({tier})" if gem_is_5h else f"Antigravity · Gemini 4 周池 ({tier})"
+        gw_title_en = f"Antigravity · Gemini 4 5h Rolling ({tier})" if gem_is_5h else f"Antigravity · Gemini 4 Weekly ({tier})"
         cards.append(
             {
                 "pool": "agy_gemini_weekly",
-                "title": f"Antigravity · Gemini 4 周池 ({tier})",
-                "title_en": f"Antigravity · Gemini 4 Weekly ({tier})",
+                "title": gw_title,
+                "title_en": gw_title_en,
                 "badge": source_badge,
                 "badge_en": source_badge_en,
                 "badge_tone": tone,
@@ -311,6 +319,8 @@ def probe_antigravity_quotas(db: FleetDB, privacy: bool = False) -> tuple[list[d
     if isinstance(c5, dict):
         rem5 = float(c5["remaining_pct"])
         reset5_en = f"{c5['hours_left']:.1f}h reset" if isinstance(c5.get("hours_left"), (int, float)) else str(c5.get("reset_text") or "")
+        c5_note_zh = "（独立第二 5h 滚动池，与 Gemini 互不占用）" if gem_is_5h else "（独立滚动，不占 Gemini 周池）"
+        c5_note_en = "(independent 2nd 5h rolling pool)" if gem_is_5h else "(independent 5h clock)"
         cards.append(
             {
                 "pool": "agy_claude_5h",
@@ -321,8 +331,8 @@ def probe_antigravity_quotas(db: FleetDB, privacy: bool = False) -> tuple[list[d
                 "badge_tone": "live" if rem5 >= 25.0 else "warn",
                 "primary": f"剩余 {rem5:.1f}%",
                 "primary_en": f"{rem5:.1f}% left",
-                "detail": f"{c5['reset_text']} · {', '.join(c5.get('families', [])[:3])}（独立滚动，不占 Gemini 周池）",
-                "detail_en": f"{reset5_en} · {', '.join(c5.get('families', [])[:3])} (independent 5h clock)",
+                "detail": f"{c5['reset_text']} · {', '.join(c5.get('families', [])[:3])}{c5_note_zh}",
+                "detail_en": f"{reset5_en} · {', '.join(c5.get('families', [])[:3])} {c5_note_en}",
                 "pct": rem5,
                 "meta": c5,
             }

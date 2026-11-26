@@ -230,6 +230,7 @@ class CockpitServer:
 
                 parsed = urllib.parse.urlparse(self.path)
                 if parsed.path == "/api/refresh-telemetry":
+                    invalidate_telemetry_cache()
                     collect_cockpit_snapshot(cockpit.db, cockpit.ai_hub, force=True)
                     if is_json:
                         self._send_json(200, {"ok": True, "message": "实时探针已刷新"})

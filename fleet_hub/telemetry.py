@@ -183,16 +183,18 @@ def _probe_storage(db: FleetDB, privacy: bool = False) -> dict[str, Any]:
                 except OSError:
                     pass
 
-    gdrive_bin = resolve_tool_bin("gdrive")
+    gd_cmd_env = _resolve_gdrive_quota_cmd()
     gd_snap: dict[str, str] | None = None
     live_gd = False
-    if gdrive_bin is not None:
+    if gd_cmd_env is not None:
+        gd_cmd, gd_env = gd_cmd_env
         try:
             proc = subprocess.run(
-                wrap_cmd([str(gdrive_bin), "readonly", "quota"]),
+                gd_cmd,
                 capture_output=True,
                 text=True,
-                timeout=6,
+                timeout=8,
+                env=gd_env,
             )
             if proc.returncode == 0:
                 u = GDRIVE_USED_RE.search(proc.stdout)
@@ -246,6 +248,25 @@ def _probe_storage(db: FleetDB, privacy: bool = False) -> dict[str, Any]:
         "detail_en": detail_en,
         "pct": pct,
     }
+
+
+def _resolve_gdrive_quota_cmd() -> tuple[list[str], dict[str, str]] | None:
+    """Resolve `gdrive readonly quota` in both interactive IDE shells and background launchd daemons."""
+    env = _with_proxy_env(os.environ)
+    gdrive_bin = resolve_tool_bin("gdrive")
+    if gdrive_bin is not None:
+        return wrap_cmd([str(gdrive_bin), "readonly", "quota"]), env
+
+    scripts_dir = Path.home() / ".gemini" / "config" / "plugins" / "gdrive" / "skills" / "gdrive" / "scripts"
+    ls_candidates = [
+        Path("/Applications/Antigravity.app/Contents/Resources/bin/language_server"),
+        resolve_tool_bin("language_server"),
+    ]
+    ls_bin = next((Path(c) for c in ls_candidates if c and Path(c).exists()), None)
+    if ls_bin is not None and scripts_dir.is_dir():
+        env["PATH"] = f"{scripts_dir}{os.pathsep}{env.get('PATH', '')}"
+        return wrap_cmd([str(ls_bin), "plugin-cli", "gdrive", "readonly", "quota"]), env
+    return None
 
 
 def _playwright_python() -> Path | None:
@@ -595,6 +616,8 @@ def collect_live_telemetry(
 
     meta_out = {"lens": agy_meta.get("lens")}
     with _CACHE_LOCK:
+        if force:
+            _CACHE_BY_PRIVACY.clear()
         _CACHE_BY_PRIVACY[use_privacy] = {
             "ts": time.time(),
             "cards": cards,
