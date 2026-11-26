@@ -158,8 +158,8 @@ flowchart LR
 
 | Pool / Layer | Live Data Source | Open-Source Wheel |
 |---|---|---|
-| **1. Antigravity · Gemini Weekly** | Local Language Server `GetUserStatus` loopback RPC (`hub_*.json`) | `Aoike123/agy-lens` (`agy-lens --json` ROI) |
-| **2. Antigravity · Claude / OSS 5h Rolling** | Same official RPC split by reset window / model family | `skainguyen1412/antigravity-usage` (`wakeup`) |
+| **1. Antigravity · Gemini 4 (5h + Weekly)** | Local Language Server `GetUserStatus` + `RetrieveUserQuotaSummary` RPC (`hub_*.json`) tracking both **5-hour rolling** and **7-day weekly rolling** limits | `Aoike123/agy-lens` (`agy-lens --json` ROI) |
+| **2. Antigravity · Claude 5.5 / OSS (5h + Weekly)** | Same official RPC tracking independent **5-hour rolling** + **7-day weekly rolling** limits | `skainguyen1412/antigravity-usage` (`wakeup`) |
 | **3. Google Colab L4 GPU** | Live `colab usage` balance, hourly burn rate & active instance guard | `google-colab-cli` |
 | **4. Google Flow + Genie** | Headless cookie cache + pure-HTTPS `nzlxg` RPC (0 browser popups) | `gflow-cli` |
 | **5. Google Drive + Workspace Bus** | `statvfs` disk telemetry + `gdrive readonly quota` + SHA256 inbox sync | `gdrive` CLI |

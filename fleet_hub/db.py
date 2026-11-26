@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import secrets
 import sqlite3
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
@@ -229,6 +230,67 @@ class FleetDB:
                 "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                 (key, value),
             )
+
+    def increment_meta_int(self, key: str, delta: int = 1) -> int:
+        with self._connect() as conn:
+            row = conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+            try:
+                cur = int(row["value"]) if row else 0
+            except (TypeError, ValueError):
+                cur = 0
+            nxt = cur + delta
+            conn.execute(
+                "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (key, str(nxt)),
+            )
+            return nxt
+
+    def get_usage_maturity(self) -> dict[str, Any]:
+        """Compute local install age, task count, user ops, and dismissal flags."""
+        now_ts = int(time.time())
+        with self._connect() as conn:
+            row_first = conn.execute("SELECT value FROM meta WHERE key = 'install_first_seen_ts'").fetchone()
+            first_ts: int | None = None
+            if row_first:
+                try:
+                    first_ts = int(row_first["value"])
+                except (TypeError, ValueError):
+                    first_ts = None
+            if first_ts is None:
+                ev_row = conn.execute("SELECT MIN(created_at) AS min_ts FROM events").fetchone()
+                min_iso = str(ev_row["min_ts"] or "") if ev_row else ""
+                if min_iso:
+                    try:
+                        parsed_ts = int(datetime.fromisoformat(min_iso).timestamp())
+                        if 0 < parsed_ts < now_ts:
+                            first_ts = parsed_ts
+                    except ValueError:
+                        pass
+                if first_ts is None:
+                    first_ts = now_ts
+                conn.execute(
+                    "INSERT INTO meta (key, value) VALUES ('install_first_seen_ts', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    (str(first_ts),),
+                )
+            task_row = conn.execute("SELECT COUNT(*) AS cnt FROM tasks").fetchone()
+            task_count = int(task_row["cnt"]) if task_row else 0
+            ops_row = conn.execute("SELECT value FROM meta WHERE key = 'cockpit_user_ops'").fetchone()
+            try:
+                server_ops = int(ops_row["value"]) if ops_row else 0
+            except (TypeError, ValueError):
+                server_ops = 0
+            dis_row = conn.execute("SELECT value FROM meta WHERE key = 'github_star_dismissed'").fetchone()
+            dismissed = bool(dis_row and str(dis_row["value"]) == "1")
+            star_row = conn.execute("SELECT value FROM meta WHERE key = 'github_repo_starred'").fetchone()
+            starred_recorded = bool(star_row and str(star_row["value"]) == "1")
+        return {
+            "first_seen_ts": first_ts,
+            "age_hours": round(max(0.0, (now_ts - first_ts) / 3600.0), 2),
+            "task_count": task_count,
+            "server_ops": server_ops,
+            "dismissed": dismissed,
+            "starred_recorded": starred_recorded,
+        }
 
     def get_or_create_csrf_token(self) -> str:
         existing = self.get_meta("cockpit_csrf_token", "")

@@ -23,11 +23,17 @@ HUB_ROOT = Path(__file__).resolve().parent.parent
 if str(HUB_ROOT) not in sys.path:
     sys.path.insert(0, str(HUB_ROOT))
 
-from fleet_hub.agy_quota_probe import parse_user_status_snapshot
+from fleet_hub import gflow_wire_probe
+from fleet_hub.agy_quota_probe import (
+    parse_quota_summary_payload,
+    parse_user_status_snapshot,
+    probe_antigravity_quotas,
+)
 from fleet_hub.approval_md import process_markdown_decisions, render_approval_center
-from fleet_hub.bridges import collect_bridge_statuses
+from fleet_hub.bridges import check_github_starred, collect_bridge_statuses, star_github_repo
 from fleet_hub.burn_advisor import build_burn_recommendations, compute_routing_verdict
 from fleet_hub.cockpit import CockpitServer
+from fleet_hub.cockpit_ui import render_cockpit_page
 from fleet_hub.config import RuntimeSecrets, mask_email, save_settings_patch
 from fleet_hub.db import FleetDB
 from fleet_hub.gcp_credits_probe import parse_gcp_credits_table
@@ -35,6 +41,7 @@ from fleet_hub.mausbot_bridge import probe_openmausbot, rebalance_openmausbot_mo
 from fleet_hub.sanitizer import parse_inbox_sections, verify_task_assets
 from fleet_hub.telemetry import (
     _probe_ai_studio,
+    _probe_flow_genie,
     _probe_paid_api,
     collect_cockpit_snapshot,
     invalidate_telemetry_cache,
@@ -758,6 +765,597 @@ class TestFleetHub(unittest.TestCase):
             finally:
                 c.shutdown()
                 t.join(timeout=2)
+
+    def test_optional_bot_and_cli_buttons_gated_cleanly(self) -> None:
+        sec = RuntimeSecrets(openmausbot_url="http://127.0.0.1:65531", t3code_url="http://127.0.0.1:3773")
+        with mock.patch("fleet_hub.mausbot_bridge.resolve_tool_bin", return_value=None), mock.patch(
+            "fleet_hub.mausbot_bridge._maus_app_exists", return_value=False
+        ):
+            card = probe_openmausbot(sec)
+            self.assertFalse(card["installed"])
+            self.assertFalse(card["cli_installed"])
+            self.assertEqual(card["bot_count"], 0)
+            self.assertEqual(card["tone"], "muted")
+
+            ok_reb, msg_reb, changes_reb = rebalance_openmausbot_models(sec, {})
+            self.assertFalse(ok_reb)
+            self.assertEqual(changes_reb, [])
+            self.assertIn("T3 Code", msg_reb)
+
+        routing = {
+            "mode": "5h_harvest",
+            "headline_zh": "优先切入 Claude 5.5",
+            "headline_en": "Route to Claude 5.5",
+            "reason_zh": "5h 池自动刷新",
+            "reason_en": "5h pool resets",
+            "recommended_coding_model": "antigravity/claude-opus-5-5",
+            "recommended_triage_model": "antigravity/claude-sonnet-5-5",
+            "wakeup_recommended": True,
+        }
+        t3_live_card = {
+            "id": "t3code",
+            "name": "T3 Code",
+            "tone": "live",
+            "status": "Running",
+            "detail": "ok",
+            "action_url": "http://127.0.0.1:3773",
+            "cli_installed": True,
+        }
+
+        # 1) OpenMausBot not installed -> hide rebalance/maus actions, optimize solo T3 Code verdict strip
+        html_no_maus = render_cockpit_page(
+            runtime=sec,
+            csrf_token="csrf-1",
+            awaiting=[],
+            others=[],
+            pools=[],
+            advisor=[],
+            bridges=[t3_live_card, card],
+            repos=[],
+            routing=routing,
+            capabilities={"wakeup_cli": True, "gcp_sync_cli": True},
+            lang="zh",
+        )
+        self.assertNotIn("/api/rebalance", html_no_maus)
+        self.assertNotIn("/api/maus-pair", html_no_maus)
+        self.assertNotIn("/api/sync-maus-team", html_no_maus)
+        self.assertNotIn(f'href="{sec.openmausbot_url}"', html_no_maus)
+        self.assertIn("copyModelId", html_no_maus)
+        self.assertIn("http://127.0.0.1:3773", html_no_maus)
+        self.assertIn("/api/wakeup", html_no_maus)
+
+        # 2) OpenMausBot desktop app running without CLI -> keep Open UI link, hide CLI buttons
+        maus_app_only = {
+            "id": "openmausbot",
+            "name": "OpenMausBot",
+            "tone": "live",
+            "status": "Running",
+            "detail": "desktop app",
+            "action_url": "http://127.0.0.1:8799",
+            "cli_installed": False,
+            "bot_count": None,
+        }
+        html_app_only = render_cockpit_page(
+            runtime=RuntimeSecrets(),
+            csrf_token="csrf-2",
+            awaiting=[],
+            others=[],
+            pools=[],
+            advisor=[],
+            bridges=[t3_live_card, maus_app_only],
+            repos=[],
+            routing=routing,
+            capabilities={"wakeup_cli": True, "gcp_sync_cli": True},
+        )
+        self.assertIn('href="http://127.0.0.1:8799"', html_app_only)
+        self.assertNotIn("/api/rebalance", html_app_only)
+        self.assertNotIn("/api/maus-pair", html_app_only)
+        self.assertNotIn("/api/sync-maus-team", html_app_only)
+
+        # 3) OpenMausBot CLI live with 0 bots -> show pair + sync-team, hide rebalance
+        maus_zero_bots = {
+            "id": "openmausbot",
+            "name": "OpenMausBot",
+            "tone": "live",
+            "status": "Running 0 Bots",
+            "detail": "0 bots",
+            "action_url": "http://127.0.0.1:8799",
+            "cli_installed": True,
+            "bot_count": 0,
+        }
+        html_zero_bots = render_cockpit_page(
+            runtime=RuntimeSecrets(),
+            csrf_token="csrf-3",
+            awaiting=[],
+            others=[],
+            pools=[],
+            advisor=[],
+            bridges=[t3_live_card, maus_zero_bots],
+            repos=[],
+            routing=routing,
+            capabilities={"wakeup_cli": True, "gcp_sync_cli": True},
+        )
+        self.assertIn("/api/sync-maus-team", html_zero_bots)
+        self.assertIn("/api/maus-pair", html_zero_bots)
+        self.assertNotIn("/api/rebalance", html_zero_bots)
+
+        # 4) Minimal install without optional CLIs or notify config -> hide missing CLI / notify actions
+        html_minimal = render_cockpit_page(
+            runtime=RuntimeSecrets(),
+            csrf_token="csrf-4",
+            awaiting=[],
+            others=[],
+            pools=[
+                {
+                    "pool": "paid_gemini_api",
+                    "title": "Credits",
+                    "badge": "Unconfigured",
+                    "badge_tone": "muted",
+                    "primary": "-",
+                    "detail": "-",
+                    "pct": None,
+                    "meta": {},
+                }
+            ],
+            advisor=[
+                {"severity": "info", "pool": "5h", "title": "Wakeup", "action": "Run", "command": "ultra wakeup"},
+                {"severity": "info", "pool": "GCP", "title": "Sync", "action": "Run", "command": "ultra sync-gcp-credits"},
+            ],
+            bridges=[
+                {"id": "t3code", "name": "T3 Code", "tone": "muted", "status": "Not Installed", "detail": "-", "action_url": "", "cli_installed": False},
+                card,
+            ],
+            repos=[],
+            routing=routing,
+            capabilities={"wakeup_cli": False, "gcp_sync_cli": False},
+        )
+        self.assertNotIn("/api/wakeup", html_minimal)
+        self.assertNotIn("/api/sync-gcp-credits", html_minimal)
+        self.assertNotIn("/api/notify-test", html_minimal)
+        self.assertNotIn("/api/t3-pair", html_minimal)
+        self.assertNotIn('href="http://127.0.0.1:3773"', html_minimal)
+
+    def test_github_star_prompt_and_confetti_flow(self) -> None:
+        sec = RuntimeSecrets()
+
+        with mock.patch("fleet_hub.bridges._resolve_gh_binary", return_value=Path("/opt/homebrew/bin/gh")), mock.patch(
+            "fleet_hub.bridges.subprocess.run",
+            return_value=mock.Mock(returncode=0, stdout="HTTP/2.0 204 No Content\r\n", stderr=""),
+        ):
+            res_starred = check_github_starred(sec, force=True)
+            self.assertTrue(res_starred["ok"])
+            self.assertTrue(res_starred["gh_available"])
+            self.assertTrue(res_starred["starred"])
+
+        with mock.patch("fleet_hub.bridges._resolve_gh_binary", return_value=Path("/opt/homebrew/bin/gh")), mock.patch(
+            "fleet_hub.bridges.subprocess.run",
+            return_value=mock.Mock(returncode=1, stdout="HTTP/2.0 404 Not Found\r\n", stderr=""),
+        ):
+            res_unstarred = check_github_starred(sec, force=True)
+            self.assertTrue(res_unstarred["ok"])
+            self.assertTrue(res_unstarred["gh_available"])
+            self.assertFalse(res_unstarred["starred"])
+
+        with mock.patch("fleet_hub.bridges._resolve_gh_binary", return_value=None):
+            res_no_gh = check_github_starred(sec, force=True)
+            self.assertTrue(res_no_gh["ok"])
+            self.assertFalse(res_no_gh["gh_available"])
+            self.assertIsNone(res_no_gh["starred"])
+
+            ok_fb, _msg_fb, data_fb = star_github_repo(sec)
+            self.assertFalse(ok_fb)
+            self.assertEqual(data_fb["via"], "browser")
+            self.assertEqual(data_fb["fallback_url"], "https://github.com/IMYin/google-ultra-maximizer")
+
+        bad_check = check_github_starred(sec, repository="IMYin/../evil", force=True)
+        self.assertFalse(bad_check["ok"])
+        self.assertIsNone(bad_check["starred"])
+
+        with mock.patch("fleet_hub.bridges._resolve_gh_binary", return_value=Path("/opt/homebrew/bin/gh")), mock.patch(
+            "fleet_hub.bridges.subprocess.run",
+            return_value=mock.Mock(returncode=0, stdout="HTTP/2.0 204 No Content\r\n", stderr=""),
+        ):
+            ok_gh, msg_gh, data_gh = star_github_repo(sec)
+            self.assertTrue(ok_gh, msg_gh)
+            self.assertTrue(data_gh["starred"])
+            self.assertEqual(data_gh["via"], "gh_cli")
+
+        with tempfile.TemporaryDirectory(prefix="fleet-star-") as td:
+            root = Path(td)
+            db = FleetDB(root / "test.sqlite")
+            ai_hub = root / "AI-Projects"
+            ai_hub.mkdir()
+            fresh_mat = db.get_usage_maturity()
+            self.assertLess(fresh_mat["age_hours"], 0.1)
+            self.assertEqual(fresh_mat["task_count"], 0)
+            self.assertEqual(fresh_mat["server_ops"], 0)
+            self.assertFalse(fresh_mat["dismissed"])
+
+            c = CockpitServer(db, ai_hub, port=0)
+            port = c.server.server_address[1]
+            t = threading.Thread(target=c.serve_forever, daemon=True)
+            t.start()
+            try:
+                fake_snap = {"pools": [], "advisor": [], "bridges": [], "lens": None}
+                with mock.patch("fleet_hub.cockpit.collect_cockpit_snapshot", return_value=fake_snap), mock.patch(
+                    "fleet_hub.cockpit.check_github_starred",
+                    return_value={"ok": True, "repo": "IMYin/google-ultra-maximizer", "url": "https://github.com/IMYin/google-ultra-maximizer", "gh_available": True, "starred": False},
+                ):
+                    with urllib.request.urlopen(f"http://127.0.0.1:{port}/?lang=zh", timeout=5) as resp_html:
+                        page = resp_html.read().decode("utf-8")
+                        self.assertIn('id="starPrompt"', page)
+                        self.assertIn('id="btnTopStar"', page)
+                        self.assertIn("celebrateConfetti", page)
+                        self.assertIn("isMatureEnough", page)
+                        self.assertIn("waitForVisibleAttention", page)
+                        self.assertIn("streamer", page)
+                        self.assertIn("wobbleX", page)
+                        self.assertIn("top:62px", page)
+                        self.assertIn("star_preview", page)
+                        self.assertIn("/api/github-star", page)
+
+                    req_op = urllib.request.Request(
+                        f"http://127.0.0.1:{port}/api/refresh-telemetry",
+                        data=json.dumps({"csrf": c.csrf_token}).encode("utf-8"),
+                        headers={"Content-Type": "application/json"},
+                        method="POST",
+                    )
+                    with urllib.request.urlopen(req_op, timeout=5) as resp_op:
+                        self.assertTrue(json.loads(resp_op.read().decode("utf-8"))["ok"])
+
+                    with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/github-star", timeout=5) as resp_chk:
+                        chk = json.loads(resp_chk.read().decode("utf-8"))
+                        self.assertTrue(chk["ok"])
+                        self.assertFalse(chk["starred"])
+                        self.assertIn("maturity", chk)
+                        self.assertEqual(chk["maturity"]["server_ops"], 1)
+                        self.assertFalse(chk["maturity"]["dismissed"])
+
+                req_bad_dis = urllib.request.Request(
+                    f"http://127.0.0.1:{port}/api/github-star-dismiss",
+                    data=json.dumps({"csrf": "bad"}).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with self.assertRaises(urllib.error.HTTPError) as ctx_dis:
+                    urllib.request.urlopen(req_bad_dis, timeout=5)
+                self.assertEqual(ctx_dis.exception.code, 403)
+
+                req_dis = urllib.request.Request(
+                    f"http://127.0.0.1:{port}/api/github-star-dismiss",
+                    data=json.dumps({"csrf": c.csrf_token}).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urllib.request.urlopen(req_dis, timeout=5) as resp_dis:
+                    self.assertTrue(json.loads(resp_dis.read().decode("utf-8"))["ok"])
+                self.assertTrue(db.get_usage_maturity()["dismissed"])
+
+                req_bad = urllib.request.Request(
+                    f"http://127.0.0.1:{port}/api/github-star",
+                    data=json.dumps({"csrf": "bad"}).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with self.assertRaises(urllib.error.HTTPError) as ctx:
+                    urllib.request.urlopen(req_bad, timeout=5)
+                self.assertEqual(ctx.exception.code, 403)
+
+                with mock.patch(
+                    "fleet_hub.cockpit.star_github_repo",
+                    return_value=(True, "已点亮 Star", {"starred": True, "url": "https://github.com/IMYin/google-ultra-maximizer", "via": "gh_cli"}),
+                ):
+                    req_ok = urllib.request.Request(
+                        f"http://127.0.0.1:{port}/api/github-star",
+                        data=json.dumps({"csrf": c.csrf_token}).encode("utf-8"),
+                        headers={"Content-Type": "application/json"},
+                        method="POST",
+                    )
+                    with urllib.request.urlopen(req_ok, timeout=5) as resp_ok:
+                        body_ok = json.loads(resp_ok.read().decode("utf-8"))
+                        self.assertTrue(body_ok["ok"])
+                        self.assertTrue(body_ok["starred"])
+                        self.assertEqual(body_ok["via"], "gh_cli")
+                    self.assertEqual(db.get_meta("github_repo_starred", ""), "1")
+
+                with mock.patch(
+                    "fleet_hub.cockpit.star_github_repo",
+                    return_value=(False, "打开 GitHub", {"starred": False, "fallback_url": "https://github.com/IMYin/google-ultra-maximizer", "via": "browser"}),
+                ):
+                    req_fb = urllib.request.Request(
+                        f"http://127.0.0.1:{port}/api/github-star",
+                        data=json.dumps({"csrf": c.csrf_token}).encode("utf-8"),
+                        headers={"Content-Type": "application/json"},
+                        method="POST",
+                    )
+                    with urllib.request.urlopen(req_fb, timeout=5) as resp_fb:
+                        body_fb = json.loads(resp_fb.read().decode("utf-8"))
+                        self.assertFalse(body_fb["ok"])
+                        self.assertEqual(body_fb["via"], "browser")
+                        self.assertEqual(body_fb["fallback_url"], "https://github.com/IMYin/google-ultra-maximizer")
+            finally:
+                c.shutdown()
+                t.join(timeout=2)
+
+    def test_dual_5h_and_weekly_quota_summary_ui_and_routing(self) -> None:
+        now_utc = datetime.now(timezone.utc)
+        reset_5h = (now_utc + timedelta(hours=1, minutes=54)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        reset_gem_wk = (now_utc + timedelta(days=6, hours=15)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        reset_3p_wk = (now_utc + timedelta(days=3, hours=15)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        raw_us = {
+            "email": "demo@example.com",
+            "userTier": {"name": "Google AI Ultra"},
+            "planStatus": {"planInfo": {"planName": "Pro"}},
+            "cascadeModelConfigData": {
+                "clientModelConfigs": [
+                    {"label": "Gemini 4 Argon (High)", "tagTitle": "Leaving Soon", "quotaInfo": {"remainingFraction": 0.8541, "resetTime": reset_5h}},
+                    {"label": "Gemini 4 Neon (High)", "tagTitle": "New", "quotaInfo": {"remainingFraction": 0.8541, "resetTime": reset_5h}},
+                    {"label": "Gemini 4 Carbon (High)", "tagTitle": "New", "quotaInfo": {"remainingFraction": 0.8541, "resetTime": reset_5h}},
+                    {"label": "Claude Opus 5.5 (High)", "quotaInfo": {"remainingFraction": 1.0, "resetTime": reset_5h}},
+                    {"label": "Claude Sonnet 5.5 (High)", "quotaInfo": {"remainingFraction": 1.0, "resetTime": reset_5h}},
+                ]
+            },
+        }
+        raw_summary = {
+            "response": {
+                "groups": [
+                    {
+                        "displayName": "Gemini Models",
+                        "description": "Models within this group: Gemini 4 Neon, Gemini 4 Carbon, Gemini 4 Hydrogen, Gemini 3.8 Flash",
+                        "buckets": [
+                            {"bucketId": "gemini-weekly", "displayName": "Weekly Limit Remaining", "window": "weekly", "remainingFraction": 0.9101029, "resetTime": reset_gem_wk},
+                            {"bucketId": "gemini-5h", "displayName": "Five Hour Limit Remaining", "window": "5h", "remainingFraction": 0.830746, "resetTime": reset_5h},
+                        ],
+                    },
+                    {
+                        "displayName": "Claude and GPT models",
+                        "description": "Models within this group: Claude Opus 5.5, Claude Sonnet 5.5, GPT-OSS 120B",
+                        "buckets": [
+                            {"bucketId": "3p-weekly", "displayName": "Weekly Limit Remaining", "window": "weekly", "remainingFraction": 1, "resetTime": reset_3p_wk},
+                            {"bucketId": "3p-5h", "displayName": "Five Hour Limit Remaining", "window": "5h", "remainingFraction": 1},
+                        ],
+                    },
+                ]
+            }
+        }
+
+        parsed_sum = parse_quota_summary_payload(raw_summary)
+        self.assertIn("gemini", parsed_sum)
+        self.assertIn("claude", parsed_sum)
+        self.assertEqual(parsed_sum["gemini"]["windows"]["5h"]["remaining_pct"], 83.1)
+        self.assertEqual(parsed_sum["gemini"]["windows"]["weekly"]["remaining_pct"], 91.0)
+        self.assertEqual(parsed_sum["claude"]["windows"]["5h"]["remaining_pct"], 100.0)
+        self.assertTrue(parsed_sum["claude"]["windows"]["5h"]["idle_unstarted"])
+        self.assertEqual(parsed_sum["claude"]["windows"]["5h"]["reset_text"], "待唤醒（首请求启动 5h 计时）")
+        self.assertEqual(parsed_sum["claude"]["windows"]["weekly"]["remaining_pct"], 100.0)
+
+        # Proto3 zero omission: omitted remainingFraction with resetTime means 0.0%
+        zero_summary = {
+            "response": {
+                "groups": [
+                    {
+                        "displayName": "Claude and GPT models",
+                        "buckets": [
+                            {"bucketId": "3p-weekly", "window": "weekly", "resetTime": reset_3p_wk},
+                            {"bucketId": "3p-5h", "window": "5h", "remainingFraction": 0.5, "resetTime": reset_5h},
+                        ],
+                    }
+                ]
+            }
+        }
+        parsed_zero = parse_quota_summary_payload(zero_summary)
+        self.assertEqual(parsed_zero["claude"]["windows"]["weekly"]["remaining_pct"], 0.0)
+        self.assertEqual(parsed_zero["claude"]["windows"]["5h"]["remaining_pct"], 50.0)
+
+        snap = parse_user_status_snapshot(raw_us, ls_version="2.35.2", quota_summary=raw_summary)
+        self.assertEqual(snap["gemini_weekly"]["window_5h"]["remaining_pct"], 83.1)
+        self.assertEqual(snap["gemini_weekly"]["window_weekly"]["remaining_pct"], 91.0)
+        self.assertEqual(snap["gemini_weekly"]["families"][0], "Gemini 4 Neon")
+        self.assertEqual(snap["claude_rolling_5h"]["window_5h"]["remaining_pct"], 100.0)
+        self.assertEqual(snap["claude_rolling_5h"]["window_weekly"]["remaining_pct"], 100.0)
+
+        with tempfile.TemporaryDirectory(prefix="fleet-dual-") as td:
+            db = FleetDB(Path(td) / "test.sqlite")
+            with (
+                mock.patch("fleet_hub.agy_quota_probe.discover_daemon_endpoints", return_value=[("http://127.0.0.1:55271", "tok", "2.35.2")]),
+                mock.patch("fleet_hub.agy_quota_probe.fetch_user_status_from_ls", return_value=raw_us),
+                mock.patch("fleet_hub.agy_quota_probe.fetch_quota_summary_from_ls", return_value=raw_summary),
+                mock.patch("fleet_hub.agy_quota_probe.fetch_agy_lens_summary", return_value={"today_usd": 12.0, "today_calls": 20, "d7_usd": 420.0, "d7_calls": 500}),
+            ):
+                cards, meta = probe_antigravity_quotas(db, privacy=True)
+
+            self.assertTrue(meta["live"])
+            self.assertEqual(len(cards), 2)
+            gem_card, c5_card = cards[0], cards[1]
+            self.assertEqual(len(gem_card["windows"]), 2)
+            self.assertEqual(gem_card["pct_5h"], 83.1)
+            self.assertEqual(gem_card["pct_weekly"], 91.0)
+            self.assertIn("5h 83.1% · 周 91.0%", gem_card["primary"])
+            self.assertIn("5h 83.1% · Wk 91.0%", gem_card["primary_en"])
+            self.assertEqual(len(c5_card["windows"]), 2)
+            self.assertEqual(c5_card["pct_5h"], 100.0)
+            self.assertEqual(c5_card["pct_weekly"], 100.0)
+            self.assertIn("待唤醒", c5_card["windows"][0]["reset"])
+            self.assertIn("Idle", c5_card["windows"][0]["reset_en"])
+
+            html_zh = render_cockpit_page(
+                runtime=RuntimeSecrets(),
+                csrf_token="csrf-zh",
+                awaiting=[],
+                others=[],
+                pools=cards,
+                advisor=[],
+                bridges=[],
+                repos=[],
+                lang="zh",
+            )
+            self.assertIn("quota-windows", html_zh)
+            self.assertIn("5h 滚动额度", html_zh)
+            self.assertIn("1周滚动额度", html_zh)
+            self.assertIn("83.1%", html_zh)
+            self.assertIn("91.0%", html_zh)
+
+            html_en = render_cockpit_page(
+                runtime=RuntimeSecrets(),
+                csrf_token="csrf-en",
+                awaiting=[],
+                others=[],
+                pools=cards,
+                advisor=[],
+                bridges=[],
+                repos=[],
+                lang="en",
+            )
+            self.assertIn("5h Rolling", html_en)
+            self.assertIn("7d Weekly", html_en)
+
+        # Gemini 5h high (85%) but Gemini Weekly scarce (18%) -> 5h_harvest to Claude 5.5
+        cards_gem_wk_low = [
+            {
+                "pool": "agy_gemini_weekly",
+                "pct": 18.0,
+                "pct_5h": 85.0,
+                "pct_weekly": 18.0,
+                "meta": {"is_rolling_5h": True, "window_5h": {"remaining_pct": 85.0}, "window_weekly": {"remaining_pct": 18.0}},
+            },
+            {
+                "pool": "agy_claude_5h",
+                "pct": 95.0,
+                "pct_5h": 100.0,
+                "pct_weekly": 95.0,
+                "meta": {"window_5h": {"remaining_pct": 100.0, "reset_text": "待唤醒"}, "window_weekly": {"remaining_pct": 95.0}},
+            },
+        ]
+        v_gem_low = compute_routing_verdict(cards_gem_wk_low, now=datetime(2026, 11, 26))
+        self.assertEqual(v_gem_low["mode"], "5h_harvest")
+        self.assertEqual(v_gem_low["recommended_coding_model"], "antigravity/claude-opus-5-5")
+        adv_gem_low = build_burn_recommendations(cards_gem_wk_low, now=datetime(2026, 11, 26))
+        self.assertTrue(any(a["severity"] == "urgent" and "Claude Opus / Sonnet 5.5" in a["title"] for a in adv_gem_low))
+
+        # Claude 5h high (100%) but Claude Weekly scarce (12%) -> protect Claude Weekly via Gemini 4
+        cards_c5_wk_low = [
+            {
+                "pool": "agy_gemini_weekly",
+                "pct": 85.0,
+                "pct_5h": 85.0,
+                "pct_weekly": 90.0,
+                "meta": {"is_rolling_5h": True, "window_5h": {"remaining_pct": 85.0}, "window_weekly": {"remaining_pct": 90.0}},
+            },
+            {
+                "pool": "agy_claude_5h",
+                "pct": 12.0,
+                "pct_5h": 100.0,
+                "pct_weekly": 12.0,
+                "meta": {"window_5h": {"remaining_pct": 100.0}, "window_weekly": {"remaining_pct": 12.0}},
+            },
+        ]
+        v_c5_low = compute_routing_verdict(cards_c5_wk_low, now=datetime(2026, 11, 26))
+        self.assertEqual(v_c5_low["mode"], "balanced")
+        self.assertEqual(v_c5_low["recommended_coding_model"], "antigravity/gemini-4-neon")
+        self.assertFalse(v_c5_low["wakeup_recommended"])
+        self.assertEqual(v_c5_low["claude_weekly_pct"], 12.0)
+        adv_c5_low = build_burn_recommendations(cards_c5_wk_low, now=datetime(2026, 11, 26))
+        self.assertTrue(any(a["severity"] == "urgent" and "12.0%" in a["title"] for a in adv_c5_low))
+
+    def test_flow_probe_multi_profile_noisy_stdout_and_stale_badge(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="fleet-flow-") as td:
+            root = Path(td)
+            db = FleetDB(root / "test.sqlite")
+            cookie_file = root / "gflow_cookies.json"
+            prof_default = root / "profile_default"
+            prof_worker = root / "profile_worker-b"
+            prof_default.mkdir()
+            prof_worker.mkdir()
+
+            class _FakeStore:
+                class NoDefaultProfileError(Exception):
+                    pass
+
+                class NoProfilesError(Exception):
+                    pass
+
+                @staticmethod
+                def get_default_profile() -> None:
+                    return None
+
+                @staticmethod
+                def list_profiles() -> list[Any]:
+                    return [
+                        mock.Mock(name="worker-b", profile_dir=prof_worker, cookies_present=True, is_default=False, last_used_at=datetime(2026, 11, 26, 15, 0, tzinfo=timezone.utc)),
+                        mock.Mock(name="default", profile_dir=prof_default, cookies_present=True, is_default=False, last_used_at=datetime(2026, 11, 26, 14, 0, tzinfo=timezone.utc)),
+                    ]
+
+            # mock.Mock(name=...) sets the mock's repr name, not .name attribute; assign .name explicitly
+            fake_metas = _FakeStore.list_profiles()
+            fake_metas[0].name = "worker-b"
+            fake_metas[1].name = "default"
+            _FakeStore.list_profiles = staticmethod(lambda: fake_metas)
+
+            with mock.patch.object(gflow_wire_probe, "COOKIE_CACHE_PATH", cookie_file):
+                cands = gflow_wire_probe.select_candidate_profiles(store=_FakeStore)
+                self.assertEqual([c.name for c in cands], ["default", "worker-b"])
+
+                gflow_wire_probe._save_cookies("default", [["SID", "v1"]])
+                gflow_wire_probe._save_cookies("worker-b", [["SID", "v2"]])
+                self.assertEqual(gflow_wire_probe._load_cookies("default"), [["SID", "v1"]])
+                self.assertEqual(gflow_wire_probe._load_cookies("worker-b"), [["SID", "v2"]])
+                gflow_wire_probe._clear_cookies("default")
+                self.assertEqual(gflow_wire_probe._load_cookies("default"), [])
+                self.assertEqual(gflow_wire_probe._load_cookies("worker-b"), [["SID", "v2"]])
+
+                # Legacy {"pairs": [...]} format backward compatibility for default
+                cookie_file.write_text(json.dumps({"pairs": [["OLD", "val"]]}), encoding="utf-8")
+                self.assertEqual(gflow_wire_probe._load_cookies("default"), [["OLD", "val"]])
+
+            # Noisy structlog stdout before final JSON line must parse cleanly
+            fake_gflow_py = root / "gflow_py"
+            fake_gflow_py.write_text("", encoding="utf-8")
+            noisy_stdout = (
+                "2026-11-27 01:35:48 [debug    ] credits.wire_set_cookie_dropped names={'NID'}\n"
+                '{"status": "ok", "authenticated": true, "profile": "default", "email": "demo@example.com", "credits": 23374}\n'
+            )
+            with (
+                mock.patch("fleet_hub.telemetry.load_secrets", return_value=RuntimeSecrets(flow_monthly_credits=25000.0)),
+                mock.patch("fleet_hub.telemetry.resolve_tool_bin", return_value=Path("/usr/local/bin/gflow")),
+                mock.patch("fleet_hub.telemetry.GFLOW_PYTHON_CANDIDATE", fake_gflow_py),
+                mock.patch("fleet_hub.telemetry.subprocess.run", return_value=mock.Mock(returncode=0, stdout=noisy_stdout, stderr="")),
+            ):
+                card_live = _probe_flow_genie(db, privacy=True)
+
+            self.assertEqual(card_live["badge_tone"], "live")
+            self.assertEqual(card_live["primary"], "23,374 积分可用")
+            self.assertIn("d***@example.com", card_live["detail"])
+            self.assertIn("本月剩余", card_live["detail"])
+            self.assertAlmostEqual(card_live["pct"], (23374.0 / 25000.0) * 100.0, places=2)
+
+            # On busy/profile_locked, cached 23,374 snapshot is preserved with amber "stale" badge
+            busy_stdout = '{"status": "busy", "reason": "profile_locked"}\n'
+            with (
+                mock.patch("fleet_hub.telemetry.load_secrets", return_value=RuntimeSecrets(flow_monthly_credits=25000.0)),
+                mock.patch("fleet_hub.telemetry.resolve_tool_bin", return_value=Path("/usr/local/bin/gflow")),
+                mock.patch("fleet_hub.telemetry.GFLOW_PYTHON_CANDIDATE", fake_gflow_py),
+                mock.patch("fleet_hub.telemetry.subprocess.run", return_value=mock.Mock(returncode=0, stdout=busy_stdout, stderr="")),
+            ):
+                card_busy = _probe_flow_genie(db, privacy=True)
+
+            self.assertEqual(card_busy["badge_tone"], "stale")
+            self.assertEqual(card_busy["primary"], "23,374 积分可用")
+            self.assertIn("渲染占用", card_busy["badge"])
+
+            html_stale = render_cockpit_page(
+                runtime=RuntimeSecrets(),
+                csrf_token="csrf-flow",
+                awaiting=[],
+                others=[],
+                pools=[card_busy],
+                advisor=[],
+                bridges=[],
+                repos=[],
+                lang="zh",
+            )
+            self.assertIn("source-badge stale", html_stale)
+            self.assertIn("23,374 积分可用", html_stale)
 
 
 if __name__ == "__main__":

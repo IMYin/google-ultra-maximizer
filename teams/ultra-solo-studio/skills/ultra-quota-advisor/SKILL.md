@@ -17,12 +17,13 @@ curl -fsS --noproxy '*' http://127.0.0.1:7788/api/state
 
 ## 2. Routing Rules Across the 7 Independent Pools
 
-1. **Antigravity · Claude Opus / Sonnet 5.5 + GPT-OSS 120B (5-Hour Rolling Pool)**
-   - Resets every **5 hours** independently of Gemini weekly quotas.
-   - Whenever `agy_claude_5h.pct >= 40%` (especially if `agy_gemini_weekly.pct < 55%`), route coding, code reviews, architecture specs, and Chief-of-Staff orchestration to **Claude Opus / Sonnet 5.5**.
-   - Run `ultra wakeup` in the morning if the 5h window is idle (`100%`) so multiple reset cycles are captured per day, or run `ultra rebalance` to switch all idle Antigravity bots off Gemini Weekly onto the 5h pool.
-2. **Antigravity · Gemini Weekly Pool (`agy_gemini_weekly`)**
-   - Preserve for deep multi-file synthesis and long-horizon reasoning when weekly headroom is tight.
+1. **Antigravity · Claude Opus / Sonnet 5.5 + GPT-OSS 120B (`agy_claude_5h`, 5h + 7d Weekly Rolling)**
+   - Exposes `pct_5h`, `pct_weekly`, and `windows` (`5h` + `weekly` rolling limits) in `/api/state`, resetting independently of Gemini quotas.
+   - Whenever `agy_claude_5h.pct_5h >= 40%` and `agy_claude_5h.pct_weekly >= 25%` (especially if `agy_gemini_weekly.pct_weekly < 55%`), route coding, code reviews, architecture specs, and Chief-of-Staff orchestration to **Claude Opus / Sonnet 5.5**.
+   - Run `ultra wakeup` in the morning if the 5h window is idle (`100%`) and weekly headroom is healthy so multiple reset cycles are captured per day, or run `ultra rebalance` to switch all idle Antigravity bots onto the recommended pool.
+2. **Antigravity · Gemini 4 Pool (`agy_gemini_weekly`, 5h + 7d Weekly Rolling)**
+   - Also exposes `pct_5h`, `pct_weekly`, and `windows` (`5h` + `weekly` rolling limits) in `/api/state`.
+   - Preserve for deep multi-file synthesis and long-horizon reasoning when weekly headroom is tight, or shift coding back here if `agy_claude_5h.pct_weekly < 25%`.
 3. **Google Cloud / Gemini Paid API Credits (`paid_gemini_api`)**
    - Always check `remaining_usd` and `earliest_grant.end_date`.
    - Use **Gemini Batch API** (50% cost) for bulk overnight labeling/translation/evaluation, or fund an **x86_64 Linux BYO VPS** (`OpenMausBot → Settings → Self-hosted VPS`) for 24/7 browser/research bots.

@@ -52,7 +52,7 @@ def _no_proxy_env() -> dict[str, str]:
 def probe_openmausbot(secrets: RuntimeSecrets) -> dict[str, Any]:
     """Check OpenMausBot CLI / server health, loaded bots, and BYO VPS configuration."""
     cli = resolve_tool_bin("openmausbot")
-    has_app = _ma_app = _maus_app_exists()
+    has_app = _maus_app_exists()
     url = secrets.openmausbot_url.rstrip("/")
     listening = False
 
@@ -82,6 +82,10 @@ def probe_openmausbot(secrets: RuntimeSecrets) -> dict[str, Any]:
             "detail": "日常使用 T3 Code + Fleet-Hub 即已完备；如需无人值守巡检或 BYO VPS，运行 `./scripts/bootstrap.sh --with-mausbot` 按需开启",
             "detail_en": "Optional add-on: T3 Code + Fleet-Hub cover daily work; run `./scripts/bootstrap.sh --with-mausbot` to enable",
             "action_url": "",
+            "installed": False,
+            "cli_installed": False,
+            "bot_count": 0,
+            "bots": [],
         }
 
     bot_count: int | None = None
@@ -133,6 +137,11 @@ def probe_openmausbot(secrets: RuntimeSecrets) -> dict[str, Any]:
             status_en = f"🟢 Running · {bot_count} Bots ({url})"
             detail_txt = f"Antigravity 官方 ACP + 多角色派单/卡片审批{team_note}{vps_note}"
             detail_en = f"Antigravity ACP + multi-role dispatch & inline cards{team_note_en}{vps_note_en}"
+        elif cli is None:
+            status_txt = f"🟢 运行中 ({url})"
+            status_en = f"🟢 Running ({url})"
+            detail_txt = f"桌面端运行中（未检测到 openmausbot CLI，命令行切池/配对已隐藏，可直接打开控制台）{vps_note}"
+            detail_en = f"Desktop app running (openmausbot CLI not found; CLI actions hidden—use Open UI){vps_note_en}"
         else:
             status_txt = f"🟢 运行中 ({url})"
             status_en = f"🟢 Running ({url})"
@@ -149,6 +158,9 @@ def probe_openmausbot(secrets: RuntimeSecrets) -> dict[str, Any]:
             "detail": detail_txt,
             "detail_en": detail_en,
             "action_url": url,
+            "installed": True,
+            "cli_installed": bool(cli),
+            "bot_count": bot_count,
             "ultra_ready": ultra_ready,
             "bots": bot_roster,
         }
@@ -164,6 +176,9 @@ def probe_openmausbot(secrets: RuntimeSecrets) -> dict[str, Any]:
         "detail": f"日常用 T3 Code + Fleet-Hub 即已完备；仅需无人值守巡检或 BYO VPS 时再运行 `ultra maus install`{vps_note}",
         "detail_en": f"Optional: T3 Code + Fleet-Hub already cover daily work; run `ultra maus install` only for unattended routines/VPS{vps_note_en}",
         "action_url": "",
+        "installed": True,
+        "cli_installed": bool(cli),
+        "bot_count": 0,
         "ultra_ready": False,
         "bots": [],
     }
@@ -211,7 +226,11 @@ def rebalance_openmausbot_models(
     """Rebalance idle OpenMausBot bots across Antigravity pools based on live quota routing."""
     cli = resolve_tool_bin("openmausbot")
     if cli is None:
-        return False, "未找到 `openmausbot` CLI", []
+        return (
+            False,
+            "未安装可选扩展 OpenMausBot CLI（日常单用 T3 Code 无需切池，直接在会话中选择推荐模型即可；如需后台哨兵 Bot 可运行 ./scripts/bootstrap.sh --with-mausbot）",
+            [],
+        )
 
     url = secrets.openmausbot_url.rstrip("/")
     try:

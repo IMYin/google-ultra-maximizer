@@ -145,8 +145,8 @@ flowchart LR
 
 | 算力池 | 真实数据源 | 重置周期 | 怎么用最划算 |
 |---|---|---|---|
-| **1. Antigravity · Gemini 周池** | 本机 Language Server `GetUserStatus` 环回直连 | 每周 | 留给重度架构设计与长链推理 |
-| **2. Antigravity · Claude 5.5 / OSS 5h 池** | 同上，按模型族与 `resetTime` 自动拆桶 | **每 5 小时** | **点击 `⚡ 唤醒 5h 池` + `⚖️ 智能切池`，把闲置 Bot 全路由到 Claude 5.5，每天多薅 3 轮** |
+| **1. Antigravity · Gemini 4 双周期池** | 本机 Language Server `GetUserStatus` + `RetrieveUserQuotaSummary` 环回直连 | **5h 滚动 + 1周滚动** | 留给重度架构设计与长链推理，兼顾 5h 与周限额 |
+| **2. Antigravity · Claude 5.5 / OSS 双周期池** | 同上，直读官方 `5h` 与 `weekly` 双桶分池限额 | **5h 滚动 + 1周滚动** | **点击 `⚡ 唤醒 5h 池` 并在 T3 Code 切换到推荐池（启用可选 OpenMausBot 时会显示 `⚖️ Bot 智能切池`），同步盯紧 5h 与周额度** |
 | **3. Google Colab L4 GPU** | `colab usage` 实时余额与按小时计费报警 | 每月 2,000 CU | 语音克隆 (F5-TTS)、Whisper 对齐、逐帧渲染全卸载云端 L4 |
 | **4. Google Flow + Project Genie** | 无头浏览器指纹缓存 + 纯 HTTPS `nzlxg` RPC | 月底清零 | 参谋实时计算「距月底剩余天数 × 每日需烧积分」，绝不浪费 |
 | **5. Google Drive + 工作区存储** | `statvfs` + `gdrive readonly quota` | 持续 | 跨端只传结构化需求与校验后素材包 |
@@ -171,7 +171,7 @@ cd google-ultra-maximizer
 启动后浏览器打开：**`http://127.0.0.1:7788`**
 - 驾驶舱提供 **极夜暗色 / 暖白编辑双主题 (`◐`)**、**`?privacy=1` 一键脱敏**、**`?lang=en` / `?lang=zh` 双语切换**，以及 **`R` 刷新 / `S` 打开校准** 快捷键。
 - 常用命令速查：
-  - `ultra rebalance`（或页面点 **⚖️ 智能切池**）：自动把闲置 Antigravity Bot 从紧缺周池切到 5h Claude 5.5 池。
+  - `ultra rebalance`（仅在启用可选 OpenMausBot 且有 Bot 时页面会显示 **⚖️ Bot 智能切池**）：自动把闲置 Antigravity Bot 从紧缺周池切到 5h Claude 5.5 池；单用 T3 Code 时直接点击推荐模型芯片即可复制切用。
   - `ultra wakeup`（或页面点 **⚡ 唤醒 5h 池**）：主动开启 5h 滚动时钟。
   - `ultra sync-gcp-credits`：无头读取 GCP 生效赠金与 VPS/API 扣费明细。
 

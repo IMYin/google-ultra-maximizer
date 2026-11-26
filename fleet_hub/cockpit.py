@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from .approval_md import render_approval_center
-from .bridges import create_t3_pair_link, run_wakeup_trigger
+from .bridges import GITHUB_REPO_URL, check_github_starred, create_t3_pair_link, run_wakeup_trigger, star_github_repo
 from .cockpit_ui import render_cockpit_page
 from .config import load_secrets, save_settings_patch
 from .db import FleetDB
@@ -136,6 +136,7 @@ class CockpitServer:
                     "/api/maus-pair",
                     "/api/wakeup",
                     "/api/rebalance",
+                    "/api/github-star-dismiss",
                 ):
                     self._redirect("/", code=302)
                     return
@@ -166,10 +167,20 @@ class CockpitServer:
                             "routing": snap.get("routing"),
                             "bridges": snap["bridges"],
                             "lens": snap["lens"],
+                            "capabilities": snap.get("capabilities"),
                             "repos": list(resolve_repo_map(cockpit.ai_hub).values()),
                             "events": cockpit.db.recent_events(20),
                         },
                     )
+                    return
+
+                if parsed.path == "/api/github-star":
+                    info = check_github_starred(load_secrets())
+                    maturity = cockpit.db.get_usage_maturity()
+                    if info.get("starred") is None and maturity["starred_recorded"]:
+                        info["starred"] = True
+                    info["maturity"] = maturity
+                    self._send_json(200, info)
                     return
 
                 if parsed.path == "/":
@@ -229,6 +240,20 @@ class CockpitServer:
                     return
 
                 parsed = urllib.parse.urlparse(self.path)
+                if parsed.path in (
+                    "/api/refresh-telemetry",
+                    "/api/wakeup",
+                    "/api/sync-gcp-credits",
+                    "/api/settings",
+                    "/api/approve",
+                    "/api/revise",
+                    "/api/t3-pair",
+                    "/api/maus-pair",
+                    "/api/sync-maus-team",
+                    "/api/rebalance",
+                ):
+                    cockpit.db.increment_meta_int("cockpit_user_ops")
+
                 if parsed.path == "/api/refresh-telemetry":
                     invalidate_telemetry_cache()
                     collect_cockpit_snapshot(cockpit.db, cockpit.ai_hub, force=True)
@@ -315,6 +340,28 @@ class CockpitServer:
                         self._redirect(_home_redirect_url("1" if ok else "0", msg))
                     return
 
+                if parsed.path == "/api/github-star":
+                    ok, msg, star_data = star_github_repo(load_secrets())
+                    if ok:
+                        cockpit.db.set_meta("github_repo_starred", "1")
+                        cockpit.db.set_meta("github_star_dismissed", "1")
+                        cockpit.db.add_event("cockpit", "GITHUB_STARRED", msg)
+                    if is_json:
+                        self._send_json(200, {"ok": ok, "message": msg, **star_data})
+                    elif ok:
+                        self._redirect(_home_redirect_url("1", msg))
+                    else:
+                        self._redirect(str(star_data.get("fallback_url") or GITHUB_REPO_URL), code=303)
+                    return
+
+                if parsed.path == "/api/github-star-dismiss":
+                    cockpit.db.set_meta("github_star_dismissed", "1")
+                    if is_json:
+                        self._send_json(200, {"ok": True})
+                    else:
+                        self._redirect("/")
+                    return
+
                 task_id = str(form.get("task_id", "")).strip()
                 if parsed.path == "/api/approve":
                     ok, msg = approve_task(cockpit.db, cockpit.ai_hub, task_id)
@@ -393,6 +440,7 @@ class CockpitServer:
             routing=snap.get("routing"),
             lens=snap.get("lens"),
             bridges=snap["bridges"],
+            capabilities=snap.get("capabilities"),
             repos=repos,
             msg=msg,
             ok_flag=ok_flag,

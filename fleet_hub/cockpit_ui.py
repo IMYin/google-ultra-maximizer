@@ -8,6 +8,7 @@ from typing import Any
 
 from .config import RuntimeSecrets, redact_path
 
+GITHUB_REPO_URL = "https://github.com/IMYin/google-ultra-maximizer"
 
 STRINGS: dict[str, dict[str, str]] = {
     "zh": {
@@ -22,7 +23,9 @@ STRINGS: dict[str, dict[str, str]] = {
         "repos": "项目",
         "btn_refresh": "刷新探针",
         "btn_wakeup": "唤醒 5h 池",
-        "btn_rebalance": "智能切池",
+        "btn_rebalance": "Bot 智能切池",
+        "rebalance_tip": "将闲置 OpenMausBot 自动路由至当前推荐模型池",
+        "copy_model_tip": "点击复制模型 ID",
         "btn_settings": "校准 / 设置",
         "btn_test_push": "测试推送",
         "btn_privacy_on": "截图脱敏",
@@ -84,6 +87,16 @@ STRINGS: dict[str, dict[str, str]] = {
         "copy_err": "复制失败，请手动复制",
         "run_now": "立即执行",
         "shortcuts_hint": "快捷键：R 刷新 · S 校准 · Esc 关闭弹窗",
+        "btn_star": "Star",
+        "btn_starred": "已 Star",
+        "star_prompt_title": "觉得 Google AI Ultra Maximizer 好用吗？",
+        "star_prompt_desc": "给 GitHub 仓库点亮一颗 Star 支持开源迭代，点完有惊喜散花 ✨",
+        "star_cta": "一键点亮 Star",
+        "star_starring": "正在点亮…",
+        "star_open_gh": "前往 GitHub 点 Star ↗",
+        "star_dismiss": "暂不",
+        "star_thanks_title": "感谢你的 Star 支持！🎉",
+        "star_thanks_desc": "祝你每天榨干双 5h 池与全部 Ultra 算力额度！",
     },
     "en": {
         "page_title": "Google AI Ultra Maximizer · Telemetry & Governance Cockpit",
@@ -98,6 +111,8 @@ STRINGS: dict[str, dict[str, str]] = {
         "btn_refresh": "Refresh",
         "btn_wakeup": "Wakeup 5h",
         "btn_rebalance": "Rebalance Bots",
+        "rebalance_tip": "Route idle OpenMausBot bots to the recommended model pool",
+        "copy_model_tip": "Click to copy model ID",
         "btn_settings": "Calibrate",
         "btn_test_push": "Test Alert",
         "btn_privacy_on": "Mask",
@@ -159,6 +174,16 @@ STRINGS: dict[str, dict[str, str]] = {
         "copy_err": "Copy failed",
         "run_now": "Run Now",
         "shortcuts_hint": "Shortcuts: R Refresh · S Calibrate · Esc Close Modal",
+        "btn_star": "Star",
+        "btn_starred": "Starred",
+        "star_prompt_title": "Enjoying Google AI Ultra Maximizer?",
+        "star_prompt_desc": "Give us a star on GitHub to help the project grow!",
+        "star_cta": "Star on GitHub",
+        "star_starring": "Starring…",
+        "star_open_gh": "Open GitHub ↗",
+        "star_dismiss": "Dismiss",
+        "star_thanks_title": "Thanks for the star! 🎉",
+        "star_thanks_desc": "It really helps Google AI Ultra Maximizer grow.",
     },
 }
 
@@ -222,6 +247,7 @@ def render_cockpit_page(
     repos: list[dict[str, Any]],
     routing: dict[str, Any] | None = None,
     lens: dict[str, Any] | None = None,
+    capabilities: dict[str, Any] | None = None,
     msg: str = "",
     ok_flag: str = "",
     privacy: bool = False,
@@ -248,7 +274,18 @@ def render_cockpit_page(
         icon = "✓" if ok_flag == "1" else "!"
         banner_html = f'<div class="{cls}"><span class="banner-dot">{icon}</span><span>{html.escape(msg)}</span></div>'
 
-    maus_live = any(b.get("id") == "openmausbot" and b.get("tone") == "live" for b in bridges)
+    caps = capabilities or {}
+    wakeup_ready = bool(caps.get("wakeup_cli", True))
+    gcp_sync_ready = bool(caps.get("gcp_sync_cli", True))
+
+    maus_bridge = next((b for b in bridges if b.get("id") == "openmausbot"), None)
+    maus_live = bool(maus_bridge and maus_bridge.get("tone") == "live")
+    maus_cli_live = bool(maus_live and maus_bridge.get("cli_installed", True))
+    maus_rebalance_ready = bool(maus_cli_live and maus_bridge.get("bot_count") != 0)
+
+    t3_bridge = next((b for b in bridges if b.get("id") == "t3code"), None)
+    t3_live = bool(t3_bridge and t3_bridge.get("tone") == "live")
+
     roi_pill = ""
     if isinstance(lens, dict) and float(lens.get("d7_usd") or 0) > 0:
         d7 = float(lens["d7_usd"])
@@ -273,6 +310,46 @@ def render_cockpit_page(
             "conserve_weekly": "CONSERVE WEEKLY" if is_en else "周池保卫模式",
             "balanced": "BALANCED" if is_en else "双池均衡",
         }.get(mode, mode.upper())
+        verdict_action_btns: list[str] = []
+        if maus_rebalance_ready:
+            verdict_action_btns.append(
+                f'<form method="POST" action="/api/rebalance" data-async="1" style="margin:0">'
+                f"{state_inputs}"
+                f'<button class="btn primary sm" type="submit" title="{html.escape(t["rebalance_tip"])}">⚖️ {html.escape(t["btn_rebalance"])}</button>'
+                f"</form>"
+            )
+            if wakeup_ready:
+                verdict_action_btns.append(
+                    f'<form method="POST" action="/api/wakeup" data-async="1" style="margin:0">'
+                    f"{state_inputs}"
+                    f'<button class="btn sm" type="submit">⚡ {html.escape(t["btn_wakeup"])}</button>'
+                    f"</form>"
+                )
+        elif wakeup_ready and bool(routing.get("wakeup_recommended")):
+            verdict_action_btns.append(
+                f'<form method="POST" action="/api/wakeup" data-async="1" style="margin:0">'
+                f"{state_inputs}"
+                f'<button class="btn primary sm" type="submit">⚡ {html.escape(t["btn_wakeup"])}</button>'
+                f"</form>"
+            )
+            if t3_live:
+                verdict_action_btns.append(
+                    f'<a class="btn sm" href="{html.escape(runtime.t3code_url)}" target="_blank" rel="noreferrer">📱 {html.escape(t["open_t3"])}</a>'
+                )
+        else:
+            if t3_live:
+                verdict_action_btns.append(
+                    f'<a class="btn primary sm" href="{html.escape(runtime.t3code_url)}" target="_blank" rel="noreferrer">📱 {html.escape(t["open_t3"])}</a>'
+                )
+            if wakeup_ready:
+                verdict_action_btns.append(
+                    f'<form method="POST" action="/api/wakeup" data-async="1" style="margin:0">'
+                    f"{state_inputs}"
+                    f'<button class="btn sm" type="submit">⚡ {html.escape(t["btn_wakeup"])}</button>'
+                    f"</form>"
+                )
+        verdict_actions_html = f'<div class="verdict-actions">{"".join(verdict_action_btns)}</div>' if verdict_action_btns else ""
+
         routing_html = f"""
         <section class="verdict-card {mode_cls}">
           <div class="verdict-main">
@@ -285,25 +362,16 @@ def render_cockpit_page(
           </div>
           <div class="verdict-side">
             <div class="model-chips">
-              <div class="model-chip">
+              <button type="button" class="model-chip" onclick="copyModelId({html.escape(json.dumps(rec_code))})" title="{html.escape(t['copy_model_tip'])}">
                 <span class="chip-lbl">{html.escape(t['lbl_rec_coding'])}</span>
                 <code>{html.escape(rec_code)}</code>
-              </div>
-              <div class="model-chip">
+              </button>
+              <button type="button" class="model-chip" onclick="copyModelId({html.escape(json.dumps(rec_triage))})" title="{html.escape(t['copy_model_tip'])}">
                 <span class="chip-lbl">{html.escape(t['lbl_rec_triage'])}</span>
                 <code>{html.escape(rec_triage)}</code>
-              </div>
+              </button>
             </div>
-            <div class="verdict-actions">
-              <form method="POST" action="/api/rebalance" data-async="1" style="margin:0">
-                {state_inputs}
-                <button class="btn primary sm" type="submit">⚖️ {html.escape(t['btn_rebalance'])}</button>
-              </form>
-              <form method="POST" action="/api/wakeup" data-async="1" style="margin:0">
-                {state_inputs}
-                <button class="btn sm" type="submit">⚡ {html.escape(t['btn_wakeup'])}</button>
-              </form>
-            </div>
+            {verdict_actions_html}
           </div>
         </section>
         """
@@ -351,16 +419,45 @@ def render_cockpit_page(
                     f'<thead><tr><th>{"剩余 / 总额" if not is_en else "Rem / Orig"}</th><th>{"已扣" if not is_en else "Used"}</th><th>{"到期日" if not is_en else "Expires"}</th></tr></thead>'
                     f"<tbody>{g_rows}</tbody></table></div></details>"
                 )
-            extra_actions = (
-                f'<div class="card-actions">'
+            sync_gcp_btn = (
                 f'<form method="POST" action="/api/sync-gcp-credits" data-async="1" style="margin:0">'
-                f'{state_inputs}'
+                f"{state_inputs}"
                 f'<button type="submit" class="btn xs primary">🔄 {html.escape(t["sync_gcp"])}</button>'
                 f"</form>"
+                if gcp_sync_ready
+                else ""
+            )
+            extra_actions = (
+                f'<div class="card-actions">'
+                f"{sync_gcp_btn}"
                 f'<button type="button" class="btn xs" onclick="openSettingsModal()">✏️ {html.escape(t["calibrate"])}</button>'
                 f'<a class="btn xs" href="https://console.cloud.google.com/billing/credits" target="_blank" rel="noreferrer">{html.escape(t["gcp_credits"])}</a>'
                 f"</div>{grants_html}"
             )
+        valid_windows = [w for w in (p.get("windows") or []) if isinstance(w, dict)] if isinstance(p.get("windows"), list) else []
+        if len(valid_windows) >= 2:
+            win_boxes: list[str] = []
+            for w in valid_windows:
+                w_pct = max(0.0, min(100.0, float(w.get("pct") or 0.0)))
+                w_color = _bar_color(pool_id, w_pct)
+                w_label = _pick_lang(w, "label", is_en)
+                w_reset = _pick_lang(w, "reset", is_en)
+                win_boxes.append(
+                    f'<div class="quota-win">'
+                    f'<div class="quota-win-head">'
+                    f'<span class="quota-win-lbl">{html.escape(w_label)}</span>'
+                    f'<span class="quota-win-val num">{w_pct:.1f}%</span>'
+                    f'</div>'
+                    f'<div class="bar"><div style="width:{w_pct:.1f}%;background:{w_color}"></div></div>'
+                    f'<div class="quota-win-sub">{html.escape(w_reset)}</div>'
+                    f'</div>'
+                )
+            body_html = f'<div class="quota-windows">{"".join(win_boxes)}</div>'
+            kicker_txt = _pick_lang(p, "kicker", is_en) or p_detail
+        else:
+            body_html = f'<div class="metric num">{html.escape(p_primary)}</div>{bar_html}'
+            kicker_txt = p_detail
+
         pool_cards.append(
             f"""
             <article class="card pool-card tone-{tone} {span_cls}">
@@ -368,9 +465,8 @@ def render_cockpit_page(
                 <h3 class="card-title">{html.escape(p_title)}</h3>
                 <span class="source-badge {tone}">{html.escape(p_badge)}</span>
               </div>
-              <div class="metric num">{html.escape(p_primary)}</div>
-              {bar_html}
-              <div class="kicker">{html.escape(p_detail)}</div>
+              {body_html}
+              <div class="kicker">{html.escape(kicker_txt)}</div>
               {extra_actions}
             </article>
             """
@@ -382,13 +478,13 @@ def render_cockpit_page(
         sev = html.escape(str(item.get("severity", "info")))
         cmd_hint = str(item.get("command") or "")
         action_btn = ""
-        if cmd_hint == "ultra wakeup":
+        if cmd_hint == "ultra wakeup" and wakeup_ready:
             action_btn = (
                 f'<form method="POST" action="/api/wakeup" data-async="1" style="margin:0">'
                 f'{state_inputs}'
                 f'<button type="submit" class="btn xs primary">⚡ {html.escape(t["run_now"])}</button></form>'
             )
-        elif cmd_hint == "ultra sync-gcp-credits":
+        elif cmd_hint == "ultra sync-gcp-credits" and gcp_sync_ready:
             action_btn = (
                 f'<form method="POST" action="/api/sync-gcp-credits" data-async="1" style="margin:0">'
                 f'{state_inputs}'
@@ -466,23 +562,28 @@ def render_cockpit_page(
                     )
                 roster_html = f'<div class="bot-roster">{"".join(bot_chips)}</div>'
 
-            if b.get("tone") == "live":
+            if maus_cli_live:
+                rebalance_btn = (
+                    f'<form method="POST" action="/api/rebalance" data-async="1" style="margin:0">'
+                    f"{state_inputs}"
+                    f'<button type="submit" class="btn xs">⚖️ {html.escape(t["rebalance_maus"])}</button>'
+                    f"</form>"
+                    if maus_rebalance_ready
+                    else ""
+                )
                 bridge_extra = (
                     f'<div class="card-actions">'
                     f'<form method="POST" action="/api/maus-pair" target="_blank" style="margin:0">'
-                    f'{state_inputs}'
+                    f"{state_inputs}"
                     f'<button type="submit" class="btn xs primary">🔑 {html.escape(t["pair_maus"])}</button>'
                     f"</form>"
-                    f'<form method="POST" action="/api/rebalance" data-async="1" style="margin:0">'
-                    f'{state_inputs}'
-                    f'<button type="submit" class="btn xs">⚖️ {html.escape(t["rebalance_maus"])}</button>'
-                    f"</form>"
+                    f"{rebalance_btn}"
                     f'<form method="POST" action="/api/sync-maus-team" data-async="1" style="margin:0">'
-                    f'{state_inputs}'
+                    f"{state_inputs}"
                     f'<button type="submit" class="btn xs">🤖 {html.escape(t["sync_maus_team"])}</button>'
                     f"</form></div>"
                 )
-        elif b_id == "t3code" and b.get("tone") == "live":
+        elif b_id == "t3code" and b.get("tone") == "live" and b.get("cli_installed", True):
             bridge_extra = (
                 f'<div class="card-actions">'
                 f'<form method="POST" action="/api/t3-pair" target="_blank" style="margin:0">'
@@ -691,7 +792,8 @@ def render_cockpit_page(
   .verdict-reason {{ font-size:12.5px; color:var(--muted); max-width:680px; }}
   .verdict-side {{ display:flex; flex-direction:column; gap:10px; align-items:flex-end; }}
   .model-chips {{ display:flex; gap:8px; flex-wrap:wrap; }}
-  .model-chip {{ background:var(--bg-elev); border:1px solid var(--line); border-radius:9px; padding:5px 10px; display:flex; flex-direction:column; gap:2px; }}
+  .model-chip {{ background:var(--bg-elev); border:1px solid var(--line); border-radius:9px; padding:5px 10px; display:flex; flex-direction:column; gap:2px; align-items:flex-start; color:var(--ink); text-align:left; font:inherit; cursor:pointer; transition:border-color .14s ease, background .14s ease; }}
+  .model-chip:hover {{ border-color:var(--line-strong); background:var(--card-hover); }}
   .chip-lbl {{ font-size:10px; color:var(--muted); font-weight:600; text-transform:uppercase; }}
   .verdict-actions {{ display:flex; gap:8px; flex-wrap:wrap; }}
 
@@ -734,6 +836,7 @@ def render_cockpit_page(
   .source-badge {{ display:inline-flex; align-items:center; font-size:11px; padding:2px 8px; border-radius:999px; font-weight:600; white-space:nowrap; max-width:100%; overflow:hidden; text-overflow:ellipsis; }}
   .source-badge.live {{ background:var(--ok-bg); color:var(--ok-ink); }}
   .source-badge.local {{ background:var(--info-bg); color:var(--info-ink); }}
+  .source-badge.stale {{ background:var(--warn-bg); color:var(--warn-ink); }}
   .source-badge.warn {{ background:var(--danger-bg); color:var(--danger-ink); }}
   .source-badge.muted {{ background:var(--muted-bg); color:var(--muted-ink); }}
   .metric {{ font-size:22px; font-weight:700; letter-spacing:-.02em; margin-bottom:7px; }}
@@ -743,6 +846,14 @@ def render_cockpit_page(
   .hero-pool .bar {{ height:8px; }}
   .bar div {{ height:100%; border-radius:999px; transition:width .35s ease; }}
   .pct-num {{ font-size:11.5px; font-weight:700; color:var(--ink-soft); font-family:ui-monospace,SFMono-Regular,monospace; }}
+  .quota-windows {{ display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px; margin:6px 0 10px; }}
+  .quota-win {{ background:var(--bg-elev); border:1px solid var(--line); border-radius:10px; padding:9px 11px; min-width:0; }}
+  .quota-win-head {{ display:flex; justify-content:space-between; align-items:baseline; gap:8px; margin-bottom:6px; }}
+  .quota-win-lbl {{ font-size:11.5px; font-weight:700; color:var(--ink-soft); white-space:nowrap; }}
+  .quota-win-val {{ font-size:19px; font-weight:700; letter-spacing:-.02em; color:var(--ink); }}
+  .quota-win .bar {{ height:7px; margin-bottom:6px; }}
+  .quota-win-sub {{ font-size:11px; color:var(--muted); line-height:1.35; overflow-wrap:anywhere; }}
+  @media (max-width:960px) {{ .quota-windows {{ grid-template-columns:1fr; }} }}
   .card-actions {{ display:flex; gap:6px; margin-top:11px; flex-wrap:wrap; }}
 
   .adv-grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:11px; margin-bottom:22px; }}
@@ -838,6 +949,53 @@ def render_cockpit_page(
   .toast.show {{ display:block; }}
   .toast.ok {{ border-color:var(--ok); color:var(--ok-ink); }}
   .toast.err {{ border-color:var(--danger); color:var(--danger-ink); }}
+
+  .star-pill {{ border-color:rgba(245,158,11,.35); }}
+  .star-pill:hover {{ border-color:var(--warn); }}
+  .star-pill.is-starred {{ background:var(--warn-bg); color:var(--warn-ink); border-color:rgba(245,158,11,.45); }}
+  @keyframes starSlideIn {{
+    from {{ opacity:0; transform:translateY(-10px) scale(.97); }}
+    to {{ opacity:1; transform:translateY(0) scale(1); }}
+  }}
+  @keyframes starBadgePulse {{
+    0%, 100% {{ transform:scale(1); }}
+    50% {{ transform:scale(1.16) rotate(-6deg); }}
+  }}
+  .star-prompt {{
+    position:fixed; top:62px; right:20px; z-index:95;
+    width:min(392px, calc(100vw - 32px));
+    background:var(--card); color:var(--ink);
+    border:1px solid rgba(245,158,11,.38); border-left:4px solid var(--warn);
+    border-radius:14px; padding:14px 16px;
+    box-shadow:0 20px 50px rgba(0,0,0,.48), 0 0 28px rgba(245,158,11,.14);
+    display:none;
+  }}
+  :root[data-theme="light"] .star-prompt {{
+    box-shadow:0 14px 36px rgba(17,24,39,.14), 0 0 0 1px rgba(217,119,6,.25);
+  }}
+  .star-prompt.show {{ display:block; animation:starSlideIn .26s cubic-bezier(.16,1,.3,1); }}
+  .star-prompt.show .star-badge-icon {{ animation:starBadgePulse .9s ease 1; }}
+  .star-prompt.is-thanks {{ border-color:rgba(16,185,129,.4); border-left-color:var(--ok); }}
+  .star-head {{ display:flex; align-items:flex-start; justify-content:space-between; gap:10px; margin-bottom:5px; }}
+  .star-title-wrap {{ display:flex; align-items:center; gap:8px; font-size:13.5px; line-height:1.35; }}
+  .star-badge-icon {{
+    width:22px; height:22px; border-radius:7px; flex-shrink:0;
+    display:grid; place-items:center; font-size:12px;
+    background:var(--warn-bg); color:var(--warn-ink);
+  }}
+  .star-prompt.is-thanks .star-badge-icon {{ background:var(--ok-bg); color:var(--ok-ink); }}
+  .star-close {{
+    background:transparent; border:none; color:var(--muted); cursor:pointer;
+    font-size:17px; line-height:1; padding:0 2px; border-radius:5px;
+  }}
+  .star-close:hover {{ color:var(--ink); background:var(--code-bg); }}
+  .star-desc {{ font-size:12px; color:var(--muted); line-height:1.45; margin-bottom:11px; }}
+  .star-actions {{ display:flex; justify-content:flex-end; align-items:center; gap:8px; flex-wrap:wrap; }}
+  .btn.star-cta {{ background:var(--warn); color:#1a1202; border-color:transparent; font-weight:700; }}
+  .btn.star-cta:hover {{ filter:brightness(1.07); border-color:transparent; }}
+  @media (max-width:720px) {{
+    .star-prompt {{ top:14px; right:12px; left:12px; width:auto; }}
+  }}
 </style>
 </head>
 <body>
@@ -849,17 +1007,17 @@ def render_cockpit_page(
       {roi_pill}
     </div>
     <div class="toolbar">
+      <button class="btn star-pill" type="button" id="btnTopStar" onclick="onTopStarClick()">
+        <span id="topStarIcon">☆</span> <span id="topStarLabel">{html.escape(t['btn_star'])}</span>
+      </button>
       {(f'<a class="btn ghost" href="{html.escape(runtime.openmausbot_url)}" target="_blank" rel="noreferrer">🤖 {html.escape(t["open_maus"])}</a>' if maus_live else '')}
-      <a class="btn ghost" href="{html.escape(runtime.t3code_url)}" target="_blank" rel="noreferrer">📱 {html.escape(t['open_t3'])}</a>
+      {(f'<a class="btn ghost" href="{html.escape(runtime.t3code_url)}" target="_blank" rel="noreferrer">📱 {html.escape(t["open_t3"])}</a>' if t3_live else '')}
       <form method="POST" action="/api/refresh-telemetry" data-async="1" style="margin:0">
         {state_inputs}
         <button id="btnRefresh" class="btn" type="submit">🔄 {html.escape(t['btn_refresh'])}</button>
       </form>
       <button class="btn" type="button" onclick="openSettingsModal()">⚙️ {html.escape(t['btn_settings'])}</button>
-      <form method="POST" action="/api/notify-test" data-async="1" style="margin:0">
-        {state_inputs}
-        <button class="btn ghost" type="submit">🔔 {html.escape(t['btn_test_push'])}</button>
-      </form>
+      {(f'<form method="POST" action="/api/notify-test" data-async="1" style="margin:0">{state_inputs}<button class="btn ghost" type="submit">🔔 {html.escape(t["btn_test_push"])}</button></form>' if runtime.notify_enabled else '')}
       <a class="btn ghost" href="/?privacy={next_privacy}&lang={use_lang}">{'🔓' if privacy else '🕶️'} {html.escape(t['btn_privacy_off'] if privacy else t['btn_privacy_on'])}</a>
       <a class="btn ghost" href="/?privacy={priv_val}&lang={other_lang}">🌐 {lang_label}</a>
       <button class="btn ghost" type="button" id="themeBtn" onclick="toggleTheme()" title="Toggle Theme">◐</button>
@@ -914,6 +1072,21 @@ def render_cockpit_page(
     <div class="table-wrap"><table><thead><tr><th>{html.escape(t['th_proj'])}</th><th>{html.escape(t['th_path'])}</th><th>{html.escape(t['th_summary'])}</th><th>{html.escape(t['th_updated'])}</th></tr></thead><tbody>{repo_rows or f'<tr><td colspan="4">{html.escape(t["no_rows"])}</td></tr>'}</tbody></table></div>
   </details>
 </main>
+
+<aside id="starPrompt" class="star-prompt" role="region" aria-label="GitHub Star">
+  <div class="star-head">
+    <div class="star-title-wrap">
+      <span class="star-badge-icon" id="starPromptIcon">⭐</span>
+      <strong id="starPromptTitle">{html.escape(t['star_prompt_title'])}</strong>
+    </div>
+    <button type="button" class="star-close" onclick="dismissStarPrompt()" aria-label="Close">×</button>
+  </div>
+  <div class="star-desc" id="starPromptDesc">{html.escape(t['star_prompt_desc'])}</div>
+  <div class="star-actions" id="starPromptActions">
+    <button type="button" class="btn xs ghost" onclick="dismissStarPrompt()">{html.escape(t['star_dismiss'])}</button>
+    <button type="button" class="btn xs star-cta" id="starActionBtn" onclick="starInPlace()">⭐ {html.escape(t['star_cta'])}</button>
+  </div>
+</aside>
 
 <div id="toast" class="toast" role="status"></div>
 
@@ -998,6 +1171,20 @@ const LOCAL_PAID_USD = {paid_local_used:.6f};
 const COPIED_LABEL = {repr(t['copied'])};
 const COPY_LABEL = {repr(t['copy_cmd'])};
 const COPY_ERR_LABEL = {repr(t['copy_err'])};
+const CSRF_TOKEN = {json.dumps(csrf_token)};
+const GITHUB_REPO_URL = {json.dumps(GITHUB_REPO_URL)};
+const STAR_I18N = {json.dumps({
+    "star": t["btn_star"],
+    "starred": t["btn_starred"],
+    "promptTitle": t["star_prompt_title"],
+    "promptDesc": t["star_prompt_desc"],
+    "cta": t["star_cta"],
+    "starring": t["star_starring"],
+    "openGh": t["star_open_gh"],
+    "dismiss": t["star_dismiss"],
+    "thanksTitle": t["star_thanks_title"],
+    "thanksDesc": t["star_thanks_desc"],
+}, ensure_ascii=False)};
 
 function toggleTheme() {{
   const cur = document.documentElement.getAttribute('data-theme') || 'dark';
@@ -1041,11 +1228,7 @@ function showToast(text, ok) {{
     }}
   }} catch(e) {{}}
 }})();
-function copyText(btn, text) {{
-  const onOk = () => {{
-    btn.textContent = COPIED_LABEL;
-    setTimeout(() => {{ btn.textContent = COPY_LABEL; }}, 1500);
-  }};
+function _writeClipboard(text, onOk) {{
   const onFallback = () => {{
     try {{
       const ta = document.createElement('textarea');
@@ -1067,9 +1250,22 @@ function copyText(btn, text) {{
     onFallback();
   }}
 }}
+function copyText(btn, text) {{
+  recordStarEngagement();
+  _writeClipboard(text, () => {{
+    btn.textContent = COPIED_LABEL;
+    setTimeout(() => {{ btn.textContent = COPY_LABEL; }}, 1500);
+  }});
+}}
+function copyModelId(text) {{
+  if (!text) return;
+  recordStarEngagement();
+  _writeClipboard(text, () => showToast(COPIED_LABEL + ': ' + text, true));
+}}
 document.querySelectorAll('form[data-async="1"]').forEach((form) => {{
   form.addEventListener('submit', async (ev) => {{
     ev.preventDefault();
+    recordStarEngagement();
     const btn = form.querySelector('button[type="submit"]');
     const origText = btn ? btn.textContent : '';
     if (btn) {{ btn.disabled = true; btn.textContent = '⏳ ...'; }}
@@ -1110,6 +1306,541 @@ document.addEventListener('keydown', (ev) => {{
     openSettingsModal();
   }}
 }});
+
+const STAR_DISMISSED_KEY = 'ultra:star-v2:dismissed';
+const STAR_DONE_KEY = 'ultra:star-v2:starred';
+const STAR_ACTIONS_KEY = 'ultra:star-v2:actions';
+const STAR_SESSIONS_KEY = 'ultra:star-v2:sessions';
+const STAR_LAST_SESSION_KEY = 'ultra:star-v2:last_session_ts';
+let _starAutoHideTimer = null;
+let _confettiState = null;
+
+function _starStorageGet(key) {{
+  try {{ return localStorage.getItem(key) === '1'; }} catch (e) {{ return false; }}
+}}
+function _starStorageSet(key, val) {{
+  try {{
+    if (val) localStorage.setItem(key, '1');
+    else localStorage.removeItem(key);
+    return true;
+  }} catch (e) {{
+    return false;
+  }}
+}}
+function _starGetInt(key) {{
+  try {{
+    const n = parseInt(localStorage.getItem(key) || '0', 10);
+    return Number.isFinite(n) ? n : 0;
+  }} catch (e) {{
+    return 0;
+  }}
+}}
+function _starSetInt(key, val) {{
+  try {{ localStorage.setItem(key, String(val)); return true; }} catch (e) {{ return false; }}
+}}
+function recordStarEngagement() {{
+  _starSetInt(STAR_ACTIONS_KEY, _starGetInt(STAR_ACTIONS_KEY) + 1);
+}}
+function _canPersistStar() {{
+  try {{
+    const probe = '__ultra_star_probe__';
+    localStorage.setItem(probe, '1');
+    localStorage.removeItem(probe);
+    return true;
+  }} catch (e) {{
+    return false;
+  }}
+}}
+const _settingsForm = document.querySelector('#settingsModal form');
+if (_settingsForm) {{
+  _settingsForm.addEventListener('submit', () => recordStarEngagement());
+}}
+function setTopStarredUI(isStarred) {{
+  const btn = document.getElementById('btnTopStar');
+  const icon = document.getElementById('topStarIcon');
+  const lbl = document.getElementById('topStarLabel');
+  if (btn) btn.classList.toggle('is-starred', !!isStarred);
+  if (icon) icon.textContent = isStarred ? '★' : '☆';
+  if (lbl) lbl.textContent = isStarred ? STAR_I18N.starred : STAR_I18N.star;
+}}
+function _ensureConfettiCanvas() {{
+  const w = window.innerWidth || 1280;
+  const h = window.innerHeight || 720;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  if (_confettiState && document.body.contains(_confettiState.canvas)) {{
+    return _confettiState;
+  }}
+  const canvas = document.createElement('canvas');
+  canvas.setAttribute('aria-hidden', 'true');
+  canvas.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none;z-index:9999;';
+  canvas.width = Math.floor(w * dpr);
+  canvas.height = Math.floor(h * dpr);
+  document.body.appendChild(canvas);
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {{ canvas.remove(); return null; }}
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  const state = {{ canvas, ctx, w, h, particles: [], rafId: 0, lastTs: 0, onResize: null }};
+  state.onResize = () => {{
+    const nw = window.innerWidth || 1280;
+    const nh = window.innerHeight || 720;
+    const ndpr = Math.min(window.devicePixelRatio || 1, 2);
+    state.w = nw;
+    state.h = nh;
+    canvas.width = Math.floor(nw * ndpr);
+    canvas.height = Math.floor(nh * ndpr);
+    ctx.setTransform(ndpr, 0, 0, ndpr, 0, 0);
+  }};
+  window.addEventListener('resize', state.onResize, {{ passive: true }});
+  _confettiState = state;
+  return state;
+}}
+function _spawnConfettiBurst(opts) {{
+  if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const state = _ensureConfettiCanvas();
+  if (!state) return;
+
+  const count = opts.particleCount || 80;
+  const angleDeg = opts.angle !== undefined ? opts.angle : 90;
+  const spreadDeg = opts.spread !== undefined ? opts.spread : 360;
+  const startVel = opts.startVelocity || 45;
+  const decay = opts.decay || 0.91;
+  const gravity = (opts.gravity !== undefined ? opts.gravity : 1.0) * 3.0;
+  const drift = opts.drift || 0;
+  const ticks = opts.ticks || 200;
+  const baseScalar = opts.scalar || 1.15;
+  const shapes = opts.shapes || ['square', 'circle', 'star', 'streamer'];
+  const palette = opts.colors || ['#f59e0b', '#fbbf24', '#10b981', '#34d399', '#3b82f6', '#60a5fa', '#ec4899', '#a855f7', '#f97316', '#ffffff'];
+
+  const ox = opts.ox !== undefined ? opts.ox : state.w * (opts.x !== undefined ? opts.x : 0.5);
+  const oy = opts.oy !== undefined ? opts.oy : state.h * (opts.y !== undefined ? opts.y : 0.5);
+  const radAngle = angleDeg * (Math.PI / 180);
+  const radSpread = spreadDeg * (Math.PI / 180);
+
+  for (let i = 0; i < count; i++) {{
+    const scalar = baseScalar * (0.85 + Math.random() * 0.65);
+    state.particles.push({{
+      x: ox,
+      y: oy,
+      wobble: Math.random() * 10,
+      wobbleSpeed: Math.min(0.12, Math.random() * 0.1 + 0.05),
+      velocity: startVel * 0.5 + Math.random() * startVel,
+      angle2D: -radAngle + (0.5 * radSpread - Math.random() * radSpread),
+      tiltAngle: (Math.random() * 0.5 + 0.25) * Math.PI,
+      tiltSpeed: 0.08 + Math.random() * 0.06,
+      color: palette[i % palette.length],
+      shape: shapes[Math.floor(Math.random() * shapes.length)],
+      tick: 0,
+      totalTicks: ticks,
+      decay,
+      drift,
+      gravity,
+      scalar,
+      ovalScalar: 0.65,
+      random: Math.random() + 2,
+      tiltSin: 0,
+      tiltCos: 0,
+      wobbleX: ox,
+      wobbleY: oy,
+    }});
+  }}
+
+  if (state.rafId) return;
+  state.lastTs = performance.now();
+
+  const drawStar = (c, rInner, rOuter) => {{
+    c.beginPath();
+    let rot = (Math.PI / 2) * 3;
+    const step = Math.PI / 5;
+    for (let i = 0; i < 5; i++) {{
+      c.lineTo(Math.cos(rot) * rOuter, Math.sin(rot) * rOuter);
+      rot += step;
+      c.lineTo(Math.cos(rot) * rInner, Math.sin(rot) * rInner);
+      rot += step;
+    }}
+    c.closePath();
+    c.fill();
+  }};
+
+  const stepFrame = (now) => {{
+    const dt = Math.min(2.2, Math.max(0.25, (now - state.lastTs) / 16.6667));
+    state.lastTs = now;
+    const ctx = state.ctx;
+    ctx.clearRect(0, 0, state.w, state.h);
+
+    const alive = [];
+    for (const p of state.particles) {{
+      p.tick += dt;
+      if (p.tick >= p.totalTicks) continue;
+
+      p.x += (Math.cos(p.angle2D) * p.velocity + p.drift) * dt;
+      p.y += (Math.sin(p.angle2D) * p.velocity + p.gravity) * dt;
+      p.velocity *= Math.pow(p.decay, dt);
+      p.wobble += p.wobbleSpeed * dt;
+      p.wobbleX = p.x + 11 * p.scalar * Math.cos(p.wobble);
+      p.wobbleY = p.y + 11 * p.scalar * Math.sin(p.wobble);
+      p.tiltAngle += p.tiltSpeed * dt;
+      p.tiltSin = Math.sin(p.tiltAngle);
+      p.tiltCos = Math.cos(p.tiltAngle);
+      p.random = Math.random() + 2;
+
+      const progress = p.tick / p.totalTicks;
+      const alpha = progress > 0.58 ? Math.max(0, 1 - Math.pow((progress - 0.58) / 0.42, 1.4)) : 1;
+
+      const x1 = p.x + p.random * p.tiltCos;
+      const y1 = p.y + p.random * p.tiltSin;
+      const x2 = p.wobbleX + p.random * p.tiltCos;
+      const y2 = p.wobbleY + p.random * p.tiltSin;
+
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = p.color;
+      ctx.strokeStyle = p.color;
+
+      if (p.shape === 'circle') {{
+        ctx.beginPath();
+        const rx = Math.max(1.5, Math.abs(x2 - x1) * p.ovalScalar);
+        const ry = Math.max(1.5, Math.abs(y2 - y1) * p.ovalScalar);
+        ctx.ellipse(p.x, p.y, rx, ry, (Math.PI / 10) * p.wobble, 0, Math.PI * 2);
+        ctx.fill();
+      }} else if (p.shape === 'star') {{
+        ctx.translate(p.x, p.y);
+        ctx.rotate(p.tiltAngle);
+        ctx.scale(1, Math.max(0.35, Math.abs(p.tiltCos)));
+        drawStar(ctx, 4.5 * p.scalar, 9.5 * p.scalar);
+      }} else if (p.shape === 'streamer') {{
+        ctx.beginPath();
+        ctx.lineWidth = Math.max(2, 2.8 * p.scalar);
+        ctx.lineCap = 'round';
+        ctx.moveTo(p.x, p.y);
+        const mx = (p.x + p.wobbleX) * 0.5 + p.tiltSin * 7 * p.scalar;
+        const my = (p.y + p.wobbleY) * 0.5 + p.tiltCos * 7 * p.scalar;
+        ctx.quadraticCurveTo(mx, my, p.wobbleX + (p.wobbleX - p.x), p.wobbleY + (p.wobbleY - p.y));
+        ctx.stroke();
+      }} else {{
+        ctx.beginPath();
+        ctx.moveTo(Math.floor(p.x), Math.floor(p.y));
+        ctx.lineTo(Math.floor(p.wobbleX), Math.floor(y1));
+        ctx.lineTo(Math.floor(x2), Math.floor(y2));
+        ctx.lineTo(Math.floor(x1), Math.floor(p.wobbleY));
+        ctx.closePath();
+        ctx.fill();
+      }}
+      ctx.restore();
+      alive.push(p);
+    }}
+    state.particles = alive;
+    if (alive.length > 0) {{
+      state.rafId = requestAnimationFrame(stepFrame);
+    }} else {{
+      window.removeEventListener('resize', state.onResize);
+      state.canvas.remove();
+      _confettiState = null;
+    }}
+  }};
+  state.rafId = requestAnimationFrame(stepFrame);
+}}
+function celebrateConfetti(anchorEl) {{
+  if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const w = window.innerWidth || 1280;
+  const h = window.innerHeight || 720;
+  let ox = w * 0.84;
+  let oy = h * 0.16;
+  if (anchorEl && typeof anchorEl.getBoundingClientRect === 'function') {{
+    const rect = anchorEl.getBoundingClientRect();
+    if (rect.width > 0 || rect.height > 0) {{
+      ox = rect.left + rect.width * 0.5;
+      oy = rect.top + rect.height * 0.45;
+    }}
+  }}
+  _spawnConfettiBurst({{
+    ox,
+    oy,
+    particleCount: 180,
+    angle: 90,
+    spread: 360,
+    startVelocity: 54,
+    decay: 0.912,
+    gravity: 1.05,
+    ticks: 230,
+    scalar: 1.28,
+  }});
+  setTimeout(() => {{
+    _spawnConfettiBurst({{
+      x: 0.08,
+      y: 0.68,
+      particleCount: 70,
+      angle: 58,
+      spread: 64,
+      startVelocity: 64,
+      decay: 0.91,
+      gravity: 1.0,
+      drift: 0.2,
+      ticks: 220,
+      scalar: 1.22,
+    }});
+    _spawnConfettiBurst({{
+      x: 0.92,
+      y: 0.68,
+      particleCount: 70,
+      angle: 122,
+      spread: 64,
+      startVelocity: 64,
+      decay: 0.91,
+      gravity: 1.0,
+      drift: -0.2,
+      ticks: 220,
+      scalar: 1.22,
+    }});
+  }}, 150);
+  setTimeout(() => {{
+    _spawnConfettiBurst({{
+      ox,
+      oy,
+      particleCount: 45,
+      angle: 90,
+      spread: 360,
+      startVelocity: 36,
+      decay: 0.915,
+      gravity: 0.85,
+      ticks: 210,
+      scalar: 1.38,
+      shapes: ['star', 'circle'],
+      colors: ['#fbbf24', '#fde047', '#f59e0b', '#fffbeb'],
+    }});
+  }}, 320);
+}}
+function dismissStarPrompt(persist = true) {{
+  if (_starAutoHideTimer) {{ clearTimeout(_starAutoHideTimer); _starAutoHideTimer = null; }}
+  const box = document.getElementById('starPrompt');
+  if (box) box.classList.remove('show');
+  if (persist) {{
+    _starStorageSet(STAR_DISMISSED_KEY, true);
+    fetch('/api/github-star-dismiss', {{
+      method: 'POST',
+      headers: {{ 'Content-Type': 'application/json' }},
+      body: JSON.stringify({{ csrf: CSRF_TOKEN }}),
+    }}).catch(() => undefined);
+  }}
+}}
+function resetStarPrompt() {{
+  if (_starAutoHideTimer) {{ clearTimeout(_starAutoHideTimer); _starAutoHideTimer = null; }}
+  const box = document.getElementById('starPrompt');
+  const icon = document.getElementById('starPromptIcon');
+  const title = document.getElementById('starPromptTitle');
+  const desc = document.getElementById('starPromptDesc');
+  const actions = document.getElementById('starPromptActions');
+  if (box) box.classList.remove('is-thanks');
+  if (icon) icon.textContent = '⭐';
+  if (title) title.textContent = STAR_I18N.promptTitle;
+  if (desc) desc.textContent = STAR_I18N.promptDesc;
+  if (actions) {{
+    actions.innerHTML = '';
+    const dismissBtn = document.createElement('button');
+    dismissBtn.type = 'button';
+    dismissBtn.className = 'btn xs ghost';
+    dismissBtn.textContent = STAR_I18N.dismiss;
+    dismissBtn.onclick = () => dismissStarPrompt(true);
+    const ctaBtn = document.createElement('button');
+    ctaBtn.type = 'button';
+    ctaBtn.className = 'btn xs star-cta';
+    ctaBtn.id = 'starActionBtn';
+    ctaBtn.textContent = '⭐ ' + STAR_I18N.cta;
+    ctaBtn.onclick = () => starInPlace();
+    actions.append(dismissBtn, ctaBtn);
+  }}
+}}
+function showThanksInPlace() {{
+  if (_starAutoHideTimer) clearTimeout(_starAutoHideTimer);
+  const box = document.getElementById('starPrompt');
+  const icon = document.getElementById('starPromptIcon');
+  const title = document.getElementById('starPromptTitle');
+  const desc = document.getElementById('starPromptDesc');
+  const actions = document.getElementById('starPromptActions');
+  if (box) {{ box.classList.add('show'); box.classList.add('is-thanks'); }}
+  if (icon) icon.textContent = '🎉';
+  if (title) title.textContent = STAR_I18N.thanksTitle;
+  if (desc) desc.textContent = STAR_I18N.thanksDesc;
+  if (actions) {{
+    actions.innerHTML = '';
+    const link = document.createElement('a');
+    link.className = 'btn xs ghost';
+    link.href = GITHUB_REPO_URL;
+    link.target = '_blank';
+    link.rel = 'noreferrer';
+    link.textContent = 'GitHub ↗';
+    actions.appendChild(link);
+  }}
+  _starAutoHideTimer = setTimeout(() => dismissStarPrompt(false), 5000);
+}}
+async function starInPlace() {{
+  const box = document.getElementById('starPrompt');
+  const btn = document.getElementById('starActionBtn');
+  if (btn) {{ btn.disabled = true; btn.textContent = '⏳ ' + STAR_I18N.starring; }}
+  try {{
+    const resp = await fetch('/api/github-star', {{
+      method: 'POST',
+      headers: {{ 'Content-Type': 'application/json' }},
+      body: JSON.stringify({{ csrf: CSRF_TOKEN }}),
+    }});
+    const data = await resp.json().catch(() => ({{ ok: false, fallback_url: GITHUB_REPO_URL }}));
+    if (data.ok && data.starred) {{
+      _starStorageSet(STAR_DONE_KEY, true);
+      _starStorageSet(STAR_DISMISSED_KEY, true);
+      setTopStarredUI(true);
+      showThanksInPlace();
+      celebrateConfetti(box);
+      return;
+    }}
+    const targetUrl = data.fallback_url || GITHUB_REPO_URL;
+    const canPopup = !navigator.userActivation || navigator.userActivation.isActive !== false;
+    const opened = canPopup ? window.open(targetUrl, '_blank', 'noopener,noreferrer') : null;
+    if (opened) {{
+      _starStorageSet(STAR_DISMISSED_KEY, true);
+      showThanksInPlace();
+      celebrateConfetti(box);
+      return;
+    }}
+    if (btn) {{
+      btn.disabled = false;
+      btn.textContent = '⭐ ' + STAR_I18N.openGh;
+      btn.onclick = () => {{
+        window.open(targetUrl, '_blank', 'noopener,noreferrer');
+        _starStorageSet(STAR_DISMISSED_KEY, true);
+        showThanksInPlace();
+        celebrateConfetti(box);
+      }};
+    }}
+  }} catch (err) {{
+    if (btn) {{
+      btn.disabled = false;
+      btn.textContent = '⭐ ' + STAR_I18N.openGh;
+      btn.onclick = () => {{
+        window.open(GITHUB_REPO_URL, '_blank', 'noopener,noreferrer');
+        _starStorageSet(STAR_DISMISSED_KEY, true);
+        showThanksInPlace();
+        celebrateConfetti(box);
+      }};
+    }}
+  }}
+}}
+function onTopStarClick() {{
+  const btn = document.getElementById('btnTopStar');
+  if (btn && btn.classList.contains('is-starred')) {{
+    showThanksInPlace();
+    celebrateConfetti(btn);
+    return;
+  }}
+  resetStarPrompt();
+  const box = document.getElementById('starPrompt');
+  if (box) box.classList.add('show');
+}}
+function isMatureEnough(info) {{
+  const m = (info && info.maturity) || {{}};
+  const ageHours = Number(m.age_hours || 0);
+  const taskCount = Number(m.task_count || 0);
+  const totalOps = Math.max(Number(m.server_ops || 0), _starGetInt(STAR_ACTIONS_KEY));
+  const sessions = _starGetInt(STAR_SESSIONS_KEY);
+  return (ageHours >= 0.25 && totalOps >= 5)
+    || (ageHours >= 24 && (sessions >= 3 || taskCount >= 2 || totalOps >= 2))
+    || (taskCount >= 3 && sessions >= 2);
+}}
+function waitForVisibleAttention() {{
+  return new Promise((resolve) => {{
+    let calmTimer = null;
+    let seenSignal = false;
+    let done = false;
+    const signals = ['pointermove', 'pointerdown', 'wheel', 'keydown', 'touchstart'];
+    const isViewClear = () => {{
+      if (document.visibilityState !== 'visible' || !document.hasFocus()) return false;
+      const dlg = document.getElementById('settingsModal');
+      if (dlg && dlg.open) return false;
+      const toast = document.getElementById('toast');
+      if (toast && toast.classList.contains('show')) return false;
+      return true;
+    }};
+    const cleanup = () => {{
+      if (calmTimer) clearTimeout(calmTimer);
+      signals.forEach((ev) => window.removeEventListener(ev, onSignal, true));
+      document.removeEventListener('visibilitychange', scheduleCheck);
+      window.removeEventListener('focus', scheduleCheck);
+    }};
+    const scheduleCheck = () => {{
+      if (done) return;
+      if (calmTimer) clearTimeout(calmTimer);
+      if (!seenSignal || !isViewClear()) {{
+        if (seenSignal && document.visibilityState === 'visible' && document.hasFocus()) {{
+          calmTimer = setTimeout(scheduleCheck, 600);
+        }}
+        return;
+      }}
+      calmTimer = setTimeout(() => {{
+        if (done) return;
+        if (!isViewClear()) {{
+          scheduleCheck();
+          return;
+        }}
+        done = true;
+        cleanup();
+        resolve();
+      }}, 1200);
+    }};
+    const onSignal = () => {{
+      seenSignal = true;
+      scheduleCheck();
+    }};
+    signals.forEach((ev) => window.addEventListener(ev, onSignal, {{ capture: true, passive: true }}));
+    document.addEventListener('visibilitychange', scheduleCheck);
+    window.addEventListener('focus', scheduleCheck);
+  }});
+}}
+(function initStarPrompt() {{
+  const canPersist = _canPersistStar();
+  if (_starStorageGet(STAR_DONE_KEY)) setTopStarredUI(true);
+
+  if (canPersist) {{
+    const nowMs = Date.now();
+    const lastMs = _starGetInt(STAR_LAST_SESSION_KEY);
+    if (!lastMs || (nowMs - lastMs) > 30 * 60 * 1000) {{
+      _starSetInt(STAR_SESSIONS_KEY, _starGetInt(STAR_SESSIONS_KEY) + 1);
+      _starSetInt(STAR_LAST_SESSION_KEY, nowMs);
+    }}
+  }}
+
+  const params = new URLSearchParams(window.location.search || '');
+  if (params.get('star_preview') === '1') {{
+    setTimeout(() => {{
+      resetStarPrompt();
+      const box = document.getElementById('starPrompt');
+      if (box) box.classList.add('show');
+    }}, 600);
+    return;
+  }}
+
+  fetch('/api/github-star')
+    .then((r) => (r.ok ? r.json() : null))
+    .then(async (info) => {{
+      if (!info) return;
+      if (info.starred === true) {{
+        _starStorageSet(STAR_DONE_KEY, true);
+        _starStorageSet(STAR_DISMISSED_KEY, true);
+        setTopStarredUI(true);
+        return;
+      }}
+      if (info.maturity && info.maturity.dismissed) {{
+        _starStorageSet(STAR_DISMISSED_KEY, true);
+        return;
+      }}
+      if (!canPersist || _starStorageGet(STAR_DISMISSED_KEY)) return;
+      if (!isMatureEnough(info)) return;
+      await waitForVisibleAttention();
+      if (_starStorageGet(STAR_DISMISSED_KEY) || _starStorageGet(STAR_DONE_KEY)) return;
+      resetStarPrompt();
+      const box = document.getElementById('starPrompt');
+      if (box) box.classList.add('show');
+    }})
+    .catch(() => undefined);
+}})();
 </script>
 </body>
 </html>"""

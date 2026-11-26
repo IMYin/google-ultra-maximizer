@@ -147,7 +147,7 @@ def _probe_colab(db: FleetDB) -> dict[str, Any]:
         "title_en": "Google Colab L4 GPU",
         "badge": badge,
         "badge_en": badge_en,
-        "badge_tone": "warn" if running_alert else "live",
+        "badge_tone": "warn" if running_alert else ("live" if live_ok else "stale"),
         "primary": f"{bal:.2f} CU 可用",
         "primary_en": f"{bal:.2f} CU left",
         "detail": f"约 {l4_hours:.0f} 小时 L4 显卡 · 速率 {rate:.2f}/hr · 活跃实例 {active} 个",
@@ -476,12 +476,41 @@ def _probe_ai_studio(ai_hub: Path) -> dict[str, Any]:
     }
 
 
+def _parse_probe_json(stdout: str) -> dict[str, Any] | None:
+    """Extract the final JSON object emitted by a subprocess, ignoring noisy structlog lines."""
+    for line in reversed(stdout.splitlines()):
+        stripped = line.strip()
+        if not stripped.startswith("{"):
+            continue
+        try:
+            obj = json.loads(stripped)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict):
+            return obj
+    if "\n{" in stdout:
+        try:
+            obj = json.loads(stdout[stdout.rfind("\n{") + 1 :])
+            if isinstance(obj, dict):
+                return obj
+        except json.JSONDecodeError:
+            pass
+    if "{" in stdout:
+        try:
+            obj = json.loads(stdout[stdout.index("{") :])
+            if isinstance(obj, dict):
+                return obj
+        except json.JSONDecodeError:
+            pass
+    return None
+
+
 def _probe_flow_genie(db: FleetDB, privacy: bool = False) -> dict[str, Any]:
     """Probe gflow-cli credits silently via pure-HTTPS nzlxg wire probe (0 browser popups)."""
     secrets = load_secrets()
     now = datetime.now()
     last_day = calendar.monthrange(now.year, now.month)[1]
-    days_left = last_day - now.day
+    days_left = max(1, last_day - now.day + 1)
     gflow = resolve_tool_bin("gflow") or resolve_tool_bin("gflow-cli")
     gflow_py = GFLOW_PYTHON_CANDIDATE if GFLOW_PYTHON_CANDIDATE.exists() else None
     if gflow_py is None and gflow is not None:
@@ -498,8 +527,8 @@ def _probe_flow_genie(db: FleetDB, privacy: bool = False) -> dict[str, Any]:
             "badge": "⚪ 未安装 gflow-cli",
             "badge_en": "⚪ gflow-cli Not Installed",
             "badge_tone": "muted",
-            "primary": f"距月末清零还剩 {days_left} 天",
-            "primary_en": f"{days_left}d until month-end reset",
+            "primary": f"本月剩余 {days_left} 天清零",
+            "primary_en": f"{days_left}d left until month-end reset",
             "detail": "安装 gflow-cli 后可直连读取剩余 Veo / Nano Banana 积分",
             "detail_en": "Install gflow-cli to stream live Veo / Nano Banana credits",
             "pct": None,
@@ -512,29 +541,33 @@ def _probe_flow_genie(db: FleetDB, privacy: bool = False) -> dict[str, Any]:
     snap: dict[str, Any] | None = None
     live_ok = False
     needs_login = False
+    busy_locked = False
 
     try:
         cred_proc = subprocess.run(
             wrap_cmd([str(gflow_py), str(GFLOW_WIRE_PROBE)]),
             capture_output=True,
             text=True,
-            timeout=25,
+            timeout=30,
             env=env,
         )
-        out = cred_proc.stdout.strip()
-        if "{" in out:
-            parsed = json.loads(out[out.index("{") :])
-            if parsed.get("status") == "ok" and parsed.get("authenticated") and parsed.get("credits") is not None:
+        parsed = _parse_probe_json(cred_proc.stdout)
+        if parsed is not None:
+            status = parsed.get("status")
+            if status == "ok" and parsed.get("authenticated") and parsed.get("credits") is not None:
                 snap = {
                     "credits": float(parsed["credits"]),
                     "email": parsed.get("email") or "",
+                    "profile": parsed.get("profile") or "",
                     "fetched_at": now_iso(),
                 }
                 db.set_meta("telemetry_gflow_json", json.dumps(snap, ensure_ascii=False))
                 live_ok = True
-            elif parsed.get("status") == "needs_login":
+            elif status == "needs_login":
                 needs_login = True
-    except (subprocess.SubprocessError, OSError, ValueError, json.JSONDecodeError):
+            elif status == "busy":
+                busy_locked = True
+    except (subprocess.SubprocessError, OSError, ValueError):
         pass
 
     if snap is None:
@@ -549,8 +582,19 @@ def _probe_flow_genie(db: FleetDB, privacy: bool = False) -> dict[str, Any]:
         credits = float(snap["credits"])
         email = mask_email(str(snap.get("email") or "已授权账号"), privacy=privacy)
         email_en = mask_email(str(snap.get("email") or "signed-in account"), privacy=privacy)
-        badge = "🟢 官方实时 RPC (无感直连)" if live_ok else f"🟡 会话快照 ({snap['fetched_at']})"
-        badge_en = "🟢 Live HTTPS RPC" if live_ok else f"🟡 Snapshot ({snap['fetched_at']})"
+        fetched_short = str(snap.get("fetched_at") or "")[:16]
+        if live_ok:
+            badge = "🟢 官方实时 RPC (无感直连)"
+            badge_en = "🟢 Live HTTPS RPC"
+            badge_tone = "live"
+        elif busy_locked:
+            badge = f"🟡 渲染占用 · 快照 ({fetched_short})"
+            badge_en = f"🟡 Busy · Snapshot ({fetched_short})"
+            badge_tone = "stale"
+        else:
+            badge = f"🟡 会话快照 ({fetched_short})"
+            badge_en = f"🟡 Snapshot ({fetched_short})"
+            badge_tone = "stale"
         denom = secrets.flow_monthly_credits if credits > 10500.0 else min(secrets.flow_monthly_credits, 10000.0)
         return {
             "pool": "flow_credits",
@@ -558,13 +602,28 @@ def _probe_flow_genie(db: FleetDB, privacy: bool = False) -> dict[str, Any]:
             "title_en": "Google Flow + Project Genie",
             "badge": badge,
             "badge_en": badge_en,
-            "badge_tone": "live",
+            "badge_tone": badge_tone,
             "primary": f"{credits:,.0f} 积分可用",
             "primary_en": f"{credits:,.0f} credits",
-            "detail": f"{email} · 距月末清零还剩 {days_left} 天",
-            "detail_en": f"{email_en} · {days_left}d until month-end expiry",
+            "detail": f"{email} · 本月剩余 {days_left} 天清零",
+            "detail_en": f"{email_en} · {days_left}d left until month-end expiry",
             "pct": min(100.0, (credits / max(denom, 1.0)) * 100.0),
             "meta": snap,
+        }
+
+    if busy_locked:
+        return {
+            "pool": "flow_credits",
+            "title": "Google Flow + Project Genie",
+            "title_en": "Google Flow + Project Genie",
+            "badge": "🟡 渲染进程占用 · 稍后重试",
+            "badge_en": "🟡 Browser Busy · Retry Later",
+            "badge_tone": "stale",
+            "primary": f"本月剩余 {days_left} 天清零",
+            "primary_en": f"{days_left}d left until month-end reset",
+            "detail": "检测到 gflow 正在运行（profile 锁占用），本轮跳过读取以避免干扰生成任务",
+            "detail_en": "gflow profile lock is active; skipped probe to avoid interrupting generation",
+            "pct": None,
         }
 
     return {
@@ -574,8 +633,8 @@ def _probe_flow_genie(db: FleetDB, privacy: bool = False) -> dict[str, Any]:
         "badge": "🟡 CLI 已安装 · 待登录会话",
         "badge_en": "🟡 CLI Installed · Login Needed",
         "badge_tone": "local",
-        "primary": f"距月末清零还剩 {days_left} 天",
-        "primary_en": f"{days_left}d until month-end reset",
+        "primary": f"本月剩余 {days_left} 天清零",
+        "primary_en": f"{days_left}d left until month-end reset",
         "detail": "终端执行 `gflow auth login` 完成一次浏览器登录后自动读取真实积分",
         "detail_en": "Run `gflow auth login` once in terminal to read live Flow credits",
         "pct": None,
@@ -656,10 +715,15 @@ def collect_cockpit_snapshot(
     advisor = build_burn_recommendations(cards, lens_stats=lens_stats)
     routing = compute_routing_verdict(cards, lens_stats=lens_stats)
     bridges = collect_bridge_statuses(secrets, force=force)
+    capabilities = {
+        "wakeup_cli": resolve_tool_bin("antigravity-usage") is not None,
+        "gcp_sync_cli": _playwright_python() is not None and GCP_CREDITS_PROBE.exists(),
+    }
     return {
         "pools": cards,
         "advisor": advisor,
         "routing": routing,
         "bridges": bridges,
         "lens": lens_stats,
+        "capabilities": capabilities,
     }
