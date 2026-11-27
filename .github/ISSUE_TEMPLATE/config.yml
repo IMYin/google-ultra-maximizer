@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Questions, ideas & show-your-setup (Discussions)
+    url: https://github.com/IMYin/google-ultra-maximizer/discussions
+    about: Not sure it's a bug? Just want to share how you use your Ultra quota? Start here.
+  - name: Security vulnerability
+    url: https://github.com/IMYin/google-ultra-maximizer/blob/main/SECURITY.md
+    about: Please report security issues privately as described in SECURITY.md.

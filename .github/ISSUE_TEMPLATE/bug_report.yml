@@ -1,0 +1,46 @@
+name: Bug report
+description: Something in the CLI, daemon, or cockpit is broken / 功能出错
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Please **redact tokens, emails, and personal paths** before pasting logs.
+        中文提交也完全没问题。
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you run, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. fleet ...
+        2. open http://127.0.0.1:...
+        3. see error
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant output / logs
+      render: shell
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      placeholder: "2.3.0 or git short SHA"
+  - type: dropdown
+    id: os
+    attributes:
+      label: OS
+      options: [macOS, Linux, Windows (WSL), Windows (native), Other]
+    validations:
+      required: true
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      placeholder: "python3 --version"

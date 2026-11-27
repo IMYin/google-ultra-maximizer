@@ -1,0 +1,41 @@
+name: Setup / quota pool not working
+description: Can't get it running, or a quota pool shows wrong / empty data / 跑不起来或配额池数据不对
+labels: [question]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **No Google AI Ultra subscription? You're still welcome here.** Tell us how far you got —
+        friction reports from first-time installs are some of the most useful feedback we get.
+        没有 Ultra 订阅也欢迎留言，告诉我们卡在哪一步就很有帮助。
+  - type: dropdown
+    id: stage
+    attributes:
+      label: Where did you get stuck?
+      options:
+        - Reading the README (unclear what it does / whether I need it)
+        - Install / bootstrap.sh
+        - Core CLI (Option A)
+        - Full stack (Option B) — external tools
+        - Cockpit loads but a quota pool is empty / wrong
+        - Background daemon / service
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: plan
+    attributes:
+      label: Which plan do you have?
+      options: [Google AI Ultra, Google AI Pro, No subscription (just exploring), Other]
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: What you ran, what you saw, which pool (Antigravity / Claude / Colab / Flow / GCP credits ...). Redact secrets.
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: OS
+      options: [macOS, Linux, Windows (WSL), Windows (native), Other]

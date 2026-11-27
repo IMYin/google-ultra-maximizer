@@ -1,0 +1,22 @@
+name: Feature / pool request
+description: Suggest a feature, a new quota pool, or an integration / 功能或新配额池建议
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      description: e.g. "I keep running out of X before Y resets and don't notice".
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Per CONTRIBUTING, we prefer wrapping an existing open-source tool behind a small probe/adapter over reinventing it — mention one if you know it.
+  - type: checkboxes
+    id: help
+    attributes:
+      label: Contribution
+      options:
+        - label: I'd be willing to open a PR for this
