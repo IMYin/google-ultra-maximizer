@@ -45,7 +45,7 @@ from fleet_hub.telemetry import (
     collect_cockpit_snapshot,
     invalidate_telemetry_cache,
 )
-from fleet_hub.updater import check_for_updates, parse_semver, perform_self_update
+from fleet_hub.updater import _github_get_json, check_for_updates, parse_semver, perform_self_update
 
 
 class TestFleetHub(unittest.TestCase):
@@ -1195,6 +1195,15 @@ class TestFleetHub(unittest.TestCase):
         self.assertGreater(parse_semver("v3.0.1"), parse_semver("3.0.0"))
         self.assertEqual(parse_semver("v3.0.0"), (3, 0, 0))
 
+        # IncompleteRead on proxy/truncated GitHub JSON must return (0, None), never crash handler
+        fake_resp = mock.MagicMock()
+        fake_resp.__enter__.return_value = fake_resp
+        fake_resp.read.side_effect = http.client.IncompleteRead(b"partial", 100)
+        fake_opener = mock.Mock()
+        fake_opener.open.return_value = fake_resp
+        with mock.patch("fleet_hub.updater._build_opener", return_value=fake_opener):
+            self.assertEqual(_github_get_json("https://api.github.com/test", RuntimeSecrets()), (0, None))
+
         with tempfile.TemporaryDirectory(prefix="fleet-upd-test-") as td:
             root = Path(td)
             fake_repo = root / "repo"
@@ -1216,7 +1225,7 @@ class TestFleetHub(unittest.TestCase):
             # 1) Newer GitHub Release -> channel="release", second call hits 6h SQLite cache
             api_calls: list[str] = []
 
-            def fake_github_release(url: str, _secrets: RuntimeSecrets, timeout: float = 8.0):
+            def fake_github_release(url: str, _secrets: RuntimeSecrets, timeout: float = 15.0):
                 api_calls.append(url)
                 if url.endswith("/releases/latest"):
                     return (
@@ -1228,13 +1237,16 @@ class TestFleetHub(unittest.TestCase):
                             "html_url": "https://github.com/IMYin/google-ultra-maximizer/releases/tag/v3.1.0",
                         },
                     )
-                if url.endswith("/commits/main"):
+                if url.endswith("/branches/main"):
                     return (
                         200,
                         {
-                            "sha": "cccc3333dddd4444",
-                            "commit": {"message": "release: v3.1.0"},
-                            "html_url": "https://github.com/IMYin/google-ultra-maximizer/commit/cccc3333",
+                            "name": "main",
+                            "commit": {
+                                "sha": "cccc3333dddd4444",
+                                "commit": {"message": "release: v3.1.0"},
+                                "html_url": "https://github.com/IMYin/google-ultra-maximizer/commit/cccc3333",
+                            },
                         },
                     )
                 return (200, {"status": "ahead", "ahead_by": 1})
@@ -1255,16 +1267,19 @@ class TestFleetHub(unittest.TestCase):
             self.assertEqual(len(api_calls), 3)  # second call reused SQLite cache
 
             # 2) Local HEAD ahead of origin/main (merge-base --is-ancestor rc=0) & no newer release -> no false positive
-            def fake_github_no_release(url: str, _secrets: RuntimeSecrets, timeout: float = 8.0):
+            def fake_github_no_release(url: str, _secrets: RuntimeSecrets, timeout: float = 15.0):
                 if url.endswith("/releases/latest"):
                     return (404, None)
-                if url.endswith("/commits/main"):
+                if url.endswith("/branches/main"):
                     return (
                         200,
                         {
-                            "sha": "0000111122223333",
-                            "commit": {"message": "old upstream"},
-                            "html_url": "https://github.com/IMYin/google-ultra-maximizer/commit/00001111",
+                            "name": "main",
+                            "commit": {
+                                "sha": "0000111122223333",
+                                "commit": {"message": "old upstream"},
+                                "html_url": "https://github.com/IMYin/google-ultra-maximizer/commit/00001111",
+                            },
                         },
                     )
                 raise AssertionError(f"compare should not run when remote is ancestor: {url}")
@@ -1281,16 +1296,19 @@ class TestFleetHub(unittest.TestCase):
             self.assertEqual(res_ahead["channel"], "up_to_date")
 
             # 3) No newer release, upstream main ahead by 2 commits -> channel="commit", behind_count=2
-            def fake_github_commit_behind(url: str, _secrets: RuntimeSecrets, timeout: float = 8.0):
+            def fake_github_commit_behind(url: str, _secrets: RuntimeSecrets, timeout: float = 15.0):
                 if url.endswith("/releases/latest"):
                     return (200, {"tag_name": "v3.0.0", "name": "v3.0.0", "body": ""})
-                if url.endswith("/commits/main"):
+                if url.endswith("/branches/main"):
                     return (
                         200,
                         {
-                            "sha": "eeee5555ffff6666",
-                            "commit": {"message": "fix: tighten telemetry cache"},
-                            "html_url": "https://github.com/IMYin/google-ultra-maximizer/commit/eeee5555",
+                            "name": "main",
+                            "commit": {
+                                "sha": "eeee5555ffff6666",
+                                "commit": {"message": "fix: tighten telemetry cache"},
+                                "html_url": "https://github.com/IMYin/google-ultra-maximizer/commit/eeee5555",
+                            },
                         },
                     )
                 if "/compare/" in url:

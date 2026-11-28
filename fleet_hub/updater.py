@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import gzip
+import http.client
 import json
 import os
 import platform
@@ -66,11 +68,12 @@ def _git_env(secrets: RuntimeSecrets) -> dict[str, str]:
     return env
 
 
-def _github_get_json(url: str, secrets: RuntimeSecrets, timeout: float = 8.0) -> tuple[int, dict[str, Any] | None]:
+def _github_get_json(url: str, secrets: RuntimeSecrets, timeout: float = 15.0) -> tuple[int, dict[str, Any] | None]:
     req = urllib.request.Request(
         url,
         headers={
             "Accept": "application/vnd.github+json",
+            "Accept-Encoding": "gzip",
             "User-Agent": f"google-ultra-maximizer/{__version__}",
         },
         method="GET",
@@ -78,11 +81,14 @@ def _github_get_json(url: str, secrets: RuntimeSecrets, timeout: float = 8.0) ->
     opener = _build_opener(secrets)
     try:
         with opener.open(req, timeout=timeout) as resp:
-            data = json.loads(resp.read().decode("utf-8", errors="replace"))
+            raw = resp.read()
+            if "gzip" in str(resp.headers.get("Content-Encoding") or "").lower():
+                raw = gzip.decompress(raw)
+            data = json.loads(raw.decode("utf-8", errors="replace"))
         return resp.status, (data if isinstance(data, dict) else None)
     except urllib.error.HTTPError as err:
         return int(err.code), None
-    except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError):
+    except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError, gzip.BadGzipFile, json.JSONDecodeError):
         return 0, None
 
 
@@ -195,7 +201,7 @@ def check_for_updates(
         return refreshed
 
     rel_status, rel_data = _github_get_json(f"https://api.github.com/repos/{repository}/releases/latest", secrets)
-    com_status, com_data = _github_get_json(f"https://api.github.com/repos/{repository}/commits/main", secrets)
+    com_status, com_data = _github_get_json(f"https://api.github.com/repos/{repository}/branches/main", secrets)
 
     if rel_status == 0 and com_status == 0:
         if cached is not None:
@@ -243,10 +249,15 @@ def check_for_updates(
     commit_message = ""
     commit_url = ""
     if com_status == 200 and isinstance(com_data, dict):
-        remote_sha = str(com_data.get("sha") or "").strip()
-        commit_obj = com_data.get("commit") if isinstance(com_data.get("commit"), dict) else {}
+        branch_commit = (
+            com_data.get("commit")
+            if isinstance(com_data.get("commit"), dict) and "sha" in com_data["commit"]
+            else com_data
+        )
+        remote_sha = str(branch_commit.get("sha") or "").strip()
+        commit_obj = branch_commit.get("commit") if isinstance(branch_commit.get("commit"), dict) else {}
         commit_message = _first_summary_line(str(commit_obj.get("message") or ""))
-        commit_url = str(com_data.get("html_url") or "").strip()
+        commit_url = str(branch_commit.get("html_url") or "").strip()
 
     release_newer = bool(release_tag and parse_semver(release_tag) > parse_semver(local["version"]))
 
