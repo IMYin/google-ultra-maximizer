@@ -1,10 +1,9 @@
-"""Cross-platform background service setup, project bootstrap, and external-SSD t3code LaunchAgent helper."""
+"""Cross-platform background service setup and project bootstrap."""
 
 from __future__ import annotations
 
 import os
 import platform
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -190,74 +189,3 @@ def manage_service(action: str) -> tuple[bool, str]:
     if sys_name == "Linux":
         return _linux_service_action(action)
     return False, f"Unsupported OS for background service installer: {sys_name}"
-
-
-def fix_t3_macos_service() -> tuple[bool, str]:
-    """Repair T3 Code macOS LaunchAgent when T3CODE_HOME lives on an external SSD (prevents EX_CONFIG 78)."""
-    if platform.system() != "Darwin":
-        return False, "fix-t3-service is only needed on macOS."
-
-    t3_home = Path(os.environ.get("T3CODE_HOME", str(Path.home() / ".t3"))).expanduser()
-    versions = sorted((t3_home / "runtime" / "versions").glob("*/t3"))
-    if not versions:
-        t3_bin_found = shutil.which("t3")
-        if not t3_bin_found:
-            return False, f"No T3 binary found under {t3_home / 'runtime' / 'versions'}"
-        t3_bin = Path(t3_bin_found)
-    else:
-        t3_bin = versions[-1]
-
-    uid = os.getuid()
-    label = "com.t3tools.t3code.service"
-    plist_path = Path.home() / "Library" / "LaunchAgents" / f"{label}.plist"
-    log_dir = Path.home() / ".config" / "t3code"
-    log_dir.mkdir(parents=True, exist_ok=True)
-
-    secrets = load_secrets()
-    wrapper = resolve_tool_bin("dev-external")
-    prog_args = (
-        ["/bin/bash", str(wrapper), str(t3_bin), "__service-launcher"]
-        if wrapper
-        else [str(t3_bin), "__service-launcher"]
-    )
-    args_xml = "\n".join(f"    <string>{a}</string>" for a in prog_args)
-    path_env = os.environ.get("PATH", f"{Path.home() / '.local' / 'bin'}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin")
-    proxy_xml = ""
-    if secrets.fleet_proxy:
-        proxy_xml = (
-            f"    <key>HTTP_PROXY</key><string>{secrets.fleet_proxy}</string>\n"
-            f"    <key>HTTPS_PROXY</key><string>{secrets.fleet_proxy}</string>\n"
-            f"    <key>NO_PROXY</key><string>127.0.0.1,localhost</string>\n"
-        )
-
-    plist_text = f"""<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key><string>{label}</string>
-  <key>ProgramArguments</key>
-  <array>
-{args_xml}
-  </array>
-  <key>EnvironmentVariables</key>
-  <dict>
-    <key>PATH</key><string>{path_env}</string>
-    <key>T3CODE_HOME</key><string>{t3_home}</string>
-    <key>T3_BOOT_SERVICE_UNIT</key><string>{label}.plist</string>
-{proxy_xml}  </dict>
-  <key>WorkingDirectory</key><string>{Path.home()}</string>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
-  <key>ThrottleInterval</key><integer>5</integer>
-  <key>ExitTimeOut</key><integer>90</integer>
-  <key>StandardOutPath</key><string>{log_dir / 'boot-service.log'}</string>
-  <key>StandardErrorPath</key><string>{log_dir / 'boot-service.log'}</string>
-</dict>
-</plist>
-"""
-    subprocess.run(["launchctl", "bootout", f"gui/{uid}/{label}"], capture_output=True, text=True)
-    plist_path.write_text(plist_text, encoding="utf-8")
-    boot = subprocess.run(["launchctl", "bootstrap", f"gui/{uid}", str(plist_path)], capture_output=True, text=True)
-    if boot.returncode != 0:
-        return False, f"launchctl bootstrap failed: {boot.stderr.strip()}"
-    return True, f"Repaired and restarted {label} using logs in {log_dir}"

@@ -13,19 +13,14 @@ if str(HUB_ROOT) not in sys.path:
     sys.path.insert(0, str(HUB_ROOT))
 
 from fleet_hub.approval_md import render_approval_center
-from fleet_hub.bridges import collect_bridge_statuses, create_t3_pair_link, run_wakeup_trigger
+from fleet_hub.bridges import collect_bridge_statuses, run_wakeup_trigger
 from fleet_hub.config import detect_ai_hub, load_secrets
 from fleet_hub.daemon import register_delivery, run_daemon, scan_once
 from fleet_hub.db import FleetDB
-from fleet_hub.mausbot_bridge import (
-    apply_ultra_team,
-    create_mausbot_pair_link,
-    manage_mausbot_service,
-    rebalance_openmausbot_models,
-)
 from fleet_hub.notifier import send_test_message
-from fleet_hub.service_manager import fix_t3_macos_service, init_workspace, manage_service
+from fleet_hub.service_manager import init_workspace, manage_service
 from fleet_hub.telemetry import collect_cockpit_snapshot, invalidate_telemetry_cache, sync_gcp_credits_live
+from fleet_hub.updater import check_for_updates, perform_self_update
 from fleet_hub.worktree import approve_task, create_isolated_worktree, request_revision, resolve_repo_map
 
 
@@ -54,15 +49,9 @@ def cmd_status(args: argparse.Namespace) -> int:
     print(f"Triage Engine   : {'Paid Gemini API (' + secrets.gemini_triage_model + ')' if secrets.paid_api_enabled else 'Zero-Token Rules'}")
     print(f"Notifier        : {'Apprise (' + str(len(secrets.all_notify_urls())) + ' channel)' if secrets.notify_enabled else 'Not configured'}")
     print(f"Cockpit URL     : http://127.0.0.1:{secrets.fleet_port}")
-    print("\n--- Open-Source Wheels ---")
+    print("\n--- Native Runtime & Wheels ---")
     for b in snap["bridges"]:
         print(f"  {b['id']:15s}: {b['status']} | {b['detail']}")
-        if b.get("bots"):
-            for bot in b["bots"]:
-                inst = bot.get("instance") or ""
-                mod = bot.get("model") or ""
-                m_str = f"{inst}/{mod}" if inst and mod else (mod or "default")
-                print(f"    - {bot.get('name'):20s} -> {m_str:28s} [{bot.get('activity', 'idle')}]")
     print("\n--- Burn Advisor ---")
     for a in snap["advisor"]:
         print(f"  [{a['severity']}] {a['title']}")
@@ -190,12 +179,6 @@ def cmd_service(args: argparse.Namespace) -> int:
     return 0 if ok else 1
 
 
-def cmd_fix_t3(_args: argparse.Namespace) -> int:
-    ok, msg = fix_t3_macos_service()
-    print(msg)
-    return 0 if ok else 1
-
-
 def cmd_sync_gcp(_args: argparse.Namespace) -> int:
     ok, msg, parsed = sync_gcp_credits_live(FleetDB(), login_mode=False)
     print(json.dumps({"ok": ok, "message": msg, "data": parsed}, ensure_ascii=False, indent=2))
@@ -208,59 +191,56 @@ def cmd_gcp_login(_args: argparse.Namespace) -> int:
     return 0 if ok else 1
 
 
-def cmd_maus(args: argparse.Namespace) -> int:
-    secrets = load_secrets()
-    if args.action == "apply-team":
-        ok, msg = apply_ultra_team(secrets)
-    elif args.action == "pair":
-        ok, msg, _pair_url = create_mausbot_pair_link(secrets)
-    else:
-        ok, msg = manage_mausbot_service(args.action)
-    print(msg)
-    return 0 if ok else 1
-
-
-def cmd_t3_pair(_args: argparse.Namespace) -> int:
-    secrets = load_secrets()
-    ok, msg, pair_url = create_t3_pair_link(secrets)
-    print(pair_url or msg)
-    return 0 if ok else 1
-
-
-def cmd_rebalance(args: argparse.Namespace) -> int:
-    ai_hub = detect_ai_hub()
-    db = FleetDB()
-    secrets = load_secrets()
-    snap = collect_cockpit_snapshot(db, ai_hub, force=True)
-    ok, msg, changes = rebalance_openmausbot_models(
-        secrets,
-        snap.get("routing") or {},
-        dry_run=bool(getattr(args, "dry_run", False)),
-        include_other_engines=bool(getattr(args, "include_other_engines", False)),
-    )
-    if not getattr(args, "dry_run", False):
-        invalidate_telemetry_cache()
+def cmd_check_update(args: argparse.Namespace) -> int:
+    info = check_for_updates(FleetDB(), load_secrets(), force=True)
     if getattr(args, "json", False):
-        print(json.dumps({"ok": ok, "message": msg, "routing": snap.get("routing"), "changes": changes}, ensure_ascii=False, indent=2))
+        print(json.dumps(info, ensure_ascii=False, indent=2))
+        return 0 if info.get("ok") else 1
+    if not info.get("ok"):
+        print(f"Update check failed: {info.get('error')}")
+        return 1
+    if info.get("update_available"):
+        print(
+            f"Update available ({info.get('channel')}): "
+            f"v{info.get('local_version')} ({info.get('local_short_sha')}) -> {info.get('target_ref')}"
+        )
+        summary = info.get("release_summary") or info.get("commit_message") or ""
+        if summary:
+            print(f"Summary: {summary}")
+        if not info.get("can_auto_update"):
+            print(f"Auto-update blocked: {info.get('block_reason')}")
+        else:
+            print("Run `ultra update` to fast-forward and restart service.")
     else:
-        print(msg)
+        print(f"Up to date: v{info.get('local_version')} ({info.get('local_short_sha')})")
+    return 0
+
+
+def cmd_update(_args: argparse.Namespace) -> int:
+    ok, msg, meta = perform_self_update(FleetDB(), load_secrets(), schedule_restart=False)
+    print(msg)
+    if ok and meta.get("updated"):
+        if manage_service("status")[0]:
+            r_ok, r_msg = manage_service("restart")
+            print(r_msg)
+            return 0 if r_ok else 1
     return 0 if ok else 1
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(prog="ultra", description="Google AI Ultra Maximizer (Fleet-Hub v2.3)")
+    parser = argparse.ArgumentParser(prog="ultra", description="Google AI Ultra Maximizer (Fleet-Hub v3.0)")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_scan = sub.add_parser("scan", help="Scan AI-Projects once")
     p_scan.add_argument("--once", action="store_true", help="Run a single scan")
     p_scan.set_defaults(func=cmd_scan)
 
-    p_status = sub.add_parser("status", help="Show pools, burn advisor, wheels, and tasks")
+    p_status = sub.add_parser("status", help="Show pools, burn advisor, native runtime, and tasks")
     p_status.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     p_status.add_argument("--privacy", action="store_true", help="Mask emails and home paths")
     p_status.set_defaults(func=cmd_status)
 
-    p_doc = sub.add_parser("doctor", help="Check installed open-source wheels (t3, agy-lens, agent-desktop, apprise)")
+    p_doc = sub.add_parser("doctor", help="Check native Antigravity and wheels (agy-lens, agent-desktop, apprise)")
     p_doc.set_defaults(func=cmd_doctor)
 
     p_wake = sub.add_parser("wakeup", help="Warm up Antigravity 5h rolling quota window")
@@ -312,27 +292,18 @@ def main() -> int:
     p_svc.add_argument("action", choices=["install", "status", "restart", "uninstall"])
     p_svc.set_defaults(func=cmd_service)
 
-    p_t3 = sub.add_parser("fix-t3-service", help="Repair macOS T3 Code LaunchAgent when T3CODE_HOME is on external SSD")
-    p_t3.set_defaults(func=cmd_fix_t3)
-
-    p_gcp = sub.add_parser("sync-gcp-credits", help="Headlessly read active GCP Billing Credits table (incl. VPS/API deductions)")
+    p_gcp = sub.add_parser("sync-gcp-credits", help="Headlessly read active GCP Billing Credits table (incl. Cloud/API deductions)")
     p_gcp.set_defaults(func=cmd_sync_gcp)
 
     p_gcpl = sub.add_parser("gcp-login", help="Open one-time browser login for Google Cloud Billing Credits probe")
     p_gcpl.set_defaults(func=cmd_gcp_login)
 
-    p_maus = sub.add_parser("maus", help="Manage optional OpenMausBot service, team injection, and pairing")
-    p_maus.add_argument("action", choices=["install", "status", "restart", "uninstall", "apply-team", "pair"])
-    p_maus.set_defaults(func=cmd_maus)
+    p_chk = sub.add_parser("check-update", help="Check GitHub Releases & main branch for newer versions")
+    p_chk.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    p_chk.set_defaults(func=cmd_check_update)
 
-    p_t3p = sub.add_parser("t3-pair", help="Mint a fresh one-time browser pairing URL for T3 Code")
-    p_t3p.set_defaults(func=cmd_t3_pair)
-
-    p_reb = sub.add_parser("rebalance", help="Route idle OpenMausBot bots across quota pools using live telemetry")
-    p_reb.add_argument("--dry-run", action="store_true", help="Preview model switches without applying")
-    p_reb.add_argument("--include-other-engines", action="store_true", help="Also switch non-Antigravity bots")
-    p_reb.add_argument("--json", action="store_true", help="Emit JSON output")
-    p_reb.set_defaults(func=cmd_rebalance)
+    p_upd = sub.add_parser("update", help="Fast-forward local repository from GitHub and restart background service")
+    p_upd.set_defaults(func=cmd_update)
 
     args = parser.parse_args()
     return args.func(args)

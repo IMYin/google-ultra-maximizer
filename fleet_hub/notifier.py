@@ -70,12 +70,12 @@ def send_test_message(secrets: RuntimeSecrets) -> tuple[bool, str]:
     return send_notification(
         secrets,
         "Google AI Ultra Maximizer · 测试通知",
-        "推送通道连接成功！后续仅在需要审批或配额清零预警时通知；日常交互与手机遥控请直接使用 T3 Code。",
+        "推送通道连接成功！后续仅在需要审批或配额清零预警时通知；日常编码与代理编排直接使用原生 Antigravity 2.0。",
     )
 
 
 def notify_awaiting_approval(db: FleetDB, secrets: RuntimeSecrets, task: dict[str, Any]) -> bool:
-    """Send one passive alert per awaiting task (interactive review lives in T3 Code / Cockpit)."""
+    """Send one passive alert per awaiting task (interactive review lives in Cockpit)."""
     if not secrets.notify_enabled:
         return False
     if int(task.get("tg_message_id") or 0) > 0:
@@ -87,7 +87,7 @@ def notify_awaiting_approval(db: FleetDB, secrets: RuntimeSecrets, task: dict[st
         f"工单: {task['task_id']}\n"
         f"分支: {task['branch_name']} ({task['head_sha'][:8]})\n"
         f"改动: {summary_diff[0][:120]}\n"
-        f"驾驶舱: http://127.0.0.1:{secrets.fleet_port} | T3 Code: {secrets.t3code_url}"
+        f"驾驶舱: http://127.0.0.1:{secrets.fleet_port}"
     )
     ok, msg = send_notification(secrets, f"🟡 待拍板工单 [{task['project']}]", body)
     if ok:

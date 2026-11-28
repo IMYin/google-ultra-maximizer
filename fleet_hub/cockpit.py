@@ -9,13 +9,13 @@ from pathlib import Path
 from typing import Any
 
 from .approval_md import render_approval_center
-from .bridges import GITHUB_REPO_URL, check_github_starred, create_t3_pair_link, run_wakeup_trigger, star_github_repo
+from .bridges import GITHUB_REPO_URL, check_github_starred, run_wakeup_trigger, star_github_repo
 from .cockpit_ui import render_cockpit_page
 from .config import load_secrets, save_settings_patch
 from .db import FleetDB
-from .mausbot_bridge import apply_ultra_team, create_mausbot_pair_link, rebalance_openmausbot_models
 from .notifier import send_test_message
 from .telemetry import collect_cockpit_snapshot, invalidate_telemetry_cache, sync_gcp_credits_live
+from .updater import check_for_updates, perform_self_update
 from .worktree import approve_task, request_revision, resolve_repo_map
 
 NUMERIC_SETTINGS = (
@@ -26,9 +26,6 @@ NUMERIC_SETTINGS = (
 )
 TEXT_SETTINGS = (
     "GEMINI_TRIAGE_MODEL",
-    "T3CODE_URL",
-    "OPENMAUSBOT_URL",
-    "VPS_SSH_ALIAS",
     "FLEET_PROXY",
     "FLEET_NOTIFY_URLS",
 )
@@ -132,10 +129,8 @@ class CockpitServer:
                     "/api/settings",
                     "/api/notify-test",
                     "/api/sync-gcp-credits",
-                    "/api/sync-maus-team",
-                    "/api/maus-pair",
                     "/api/wakeup",
-                    "/api/rebalance",
+                    "/api/self-update",
                     "/api/github-star-dismiss",
                 ):
                     self._redirect("/", code=302)
@@ -172,6 +167,12 @@ class CockpitServer:
                             "events": cockpit.db.recent_events(20),
                         },
                     )
+                    return
+
+                if parsed.path == "/api/update-status":
+                    force_upd = qs.get("force", [""])[0] == "1"
+                    info = check_for_updates(cockpit.db, load_secrets(), force=force_upd)
+                    self._send_json(200, info)
                     return
 
                 if parsed.path == "/api/github-star":
@@ -247,10 +248,7 @@ class CockpitServer:
                     "/api/settings",
                     "/api/approve",
                     "/api/revise",
-                    "/api/t3-pair",
-                    "/api/maus-pair",
-                    "/api/sync-maus-team",
-                    "/api/rebalance",
+                    "/api/self-update",
                 ):
                     cockpit.db.increment_meta_int("cockpit_user_ops")
 
@@ -281,36 +279,6 @@ class CockpitServer:
                         self._redirect(_home_redirect_url("1" if ok else "0", msg))
                     return
 
-                if parsed.path == "/api/sync-maus-team":
-                    ok, msg = apply_ultra_team(load_secrets())
-                    invalidate_telemetry_cache()
-                    collect_cockpit_snapshot(cockpit.db, cockpit.ai_hub, force=True)
-                    if is_json:
-                        self._send_json(200 if ok else 400, {"ok": ok, "message": msg})
-                    else:
-                        self._redirect(_home_redirect_url("1" if ok else "0", msg))
-                    return
-
-                if parsed.path == "/api/maus-pair":
-                    ok, msg, pair_url = create_mausbot_pair_link(load_secrets())
-                    if is_json:
-                        self._send_json(200 if ok else 400, {"ok": ok, "message": msg, "pair_url": pair_url})
-                    elif ok and pair_url:
-                        self._redirect(pair_url, code=303)
-                    else:
-                        self._redirect(_home_redirect_url("0", msg))
-                    return
-
-                if parsed.path == "/api/t3-pair":
-                    ok, msg, pair_url = create_t3_pair_link(load_secrets())
-                    if is_json:
-                        self._send_json(200 if ok else 400, {"ok": ok, "message": msg, "pair_url": pair_url})
-                    elif ok and pair_url:
-                        self._redirect(pair_url, code=303)
-                    else:
-                        self._redirect(_home_redirect_url("0", msg))
-                    return
-
                 if parsed.path == "/api/wakeup":
                     ok, msg = run_wakeup_trigger()
                     invalidate_telemetry_cache()
@@ -321,21 +289,18 @@ class CockpitServer:
                         self._redirect(_home_redirect_url("1" if ok else "0", msg))
                     return
 
-                if parsed.path == "/api/rebalance":
-                    snap = collect_cockpit_snapshot(cockpit.db, cockpit.ai_hub, force=True)
-                    ok, msg, changes = rebalance_openmausbot_models(load_secrets(), snap.get("routing") or {})
-                    invalidate_telemetry_cache()
-                    collect_cockpit_snapshot(cockpit.db, cockpit.ai_hub, force=True)
-                    if is_json:
-                        self._send_json(200 if ok else 400, {"ok": ok, "message": msg, "changes": changes})
-                    else:
-                        self._redirect(_home_redirect_url("1" if ok else "0", msg))
-                    return
-
                 if parsed.path == "/api/settings":
                     ok, msg = cockpit.apply_settings_form(form)
                     if is_json:
                         self._send_json(200 if ok else 400, {"ok": ok, "message": msg})
+                    else:
+                        self._redirect(_home_redirect_url("1" if ok else "0", msg))
+                    return
+
+                if parsed.path == "/api/self-update":
+                    ok, msg, upd_meta = perform_self_update(cockpit.db, load_secrets(), schedule_restart=True)
+                    if is_json:
+                        self._send_json(200 if ok else 400, {"ok": ok, "message": msg, **upd_meta})
                     else:
                         self._redirect(_home_redirect_url("1" if ok else "0", msg))
                     return

@@ -27,10 +27,10 @@ Matt Pocock 将工程 Skill 按**谁触发**拆成严格正交的两层：
 
 ---
 
-## 3. 与当前工作流（Antigravity + T3 Code + Fleet-Hub）的结合姿势
+## 3. 与当前工作流（Native Antigravity 2.0 + Fleet-Hub）的结合姿势
 
-1. **做新功能前**：在 Antigravity 或 T3 Code 先跑 `/grill-with-docs`（或 `/grill-me`），把领域名词沉淀进项目 `GLOSSARY.md`，再让 `/to-spec` → `/to-tickets` 切出可并发的 Tracer-Bullet 切片。
+1. **做新功能前**：在 **Antigravity 2.0** 先跑 `/grill-with-docs`（或 `/grill-me`），把领域名词沉淀进项目 `GLOSSARY.md`，再让 `/to-spec` → `/to-tickets` 切出可并发的 Tracer-Bullet 切片。
 2. **修疑难 Bug 时**：明确调用 `diagnosing-bugs`——先让 Agent 交出一个已跑红的 2 秒复现命令，再看代码提 3–5 个假设。
-3. **跨 Agent 接力 & 上下文瘦身**：会话超 100k tokens 时运行 `/handoff`（写入 `$TMPDIR` 脱敏交接文档 + 推荐下一程 Skill），或切到 **T3 Code (`http://127.0.0.1:3773`)** 开新 Worktree 线程并发跑。
+3. **跨 Agent 接力 & 上下文瘦身**：会话超 100k tokens 时运行 `/handoff`（写入 `$TMPDIR` 脱敏交接文档 + 推荐下一程 Skill），或使用 Antigravity 原生 `/swarm` 与隔离 Worktree 并发跑。
 4. **周度架构体检**：用 `improve-codebase-architecture` 扫描最近 git 热点文件，把拆太碎的浅模块合并成深模块。
 5. **自动化防翻车三闸（`software-factory`）**：**自动检查（typecheck/test）→ 独立双轴 `code-review` → 人工黄区拍板**。

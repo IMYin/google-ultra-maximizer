@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "google-ultra-maximizer"
-version = "2.3.0"
+version = "3.0.0"
 description = "Zero-reinvented-wheels control plane and live 7-pool telemetry cockpit to maximize 100% of a Google AI Ultra subscription."
 readme = "README.md"
 license = {text = "MIT"}

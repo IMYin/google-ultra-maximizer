@@ -1,25 +1,21 @@
-"""Open-source wheel health probes (t3code, openmausbot, agent-desktop, agy-lens, apprise) and 5h wakeup helper."""
+"""Native Antigravity & open-source wheel health probes (antigravity, agy-lens, agent-desktop, apprise) and 5h wakeup helper."""
 
 from __future__ import annotations
 
 import concurrent.futures
 import json
 import os
-import re
 import socket
 import subprocess
 import threading
 import time
-import urllib.error
 import urllib.parse
-import urllib.request
 from pathlib import Path
 from typing import Any
 
-from .config import RuntimeSecrets, WORKSPACE_ROOT, resolve_tool_bin, wrap_cmd
-from .mausbot_bridge import probe_openmausbot
+from .agy_quota_probe import discover_daemon_endpoints
+from .config import RuntimeSecrets, resolve_tool_bin, wrap_cmd
 
-NO_PROXY_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 _BRIDGE_LOCK = threading.Lock()
 _BRIDGE_TS = 0.0
 _BRIDGE_DATA: list[dict[str, Any]] | None = None
@@ -33,80 +29,61 @@ _STAR_CACHE: dict[str, Any] | None = None
 STAR_TTL_SEC = 300.0
 
 
-def _resolve_t3_binary() -> Path | None:
-    t3_bin = resolve_tool_bin("t3")
-    if t3_bin is not None:
-        return t3_bin
-    versions_dir = WORKSPACE_ROOT / "tools" / "t3code-home" / "runtime" / "versions"
-    if versions_dir.exists():
-        candidates = sorted((p / "t3" for p in versions_dir.iterdir() if p.is_dir() and (p / "t3").is_file()), reverse=True)
-        if candidates:
-            return candidates[0]
-    return None
+def probe_antigravity_native() -> dict[str, Any]:
+    """Check native Antigravity 2.0 daemon RPC, agy CLI, and app bundle status."""
+    endpoints = discover_daemon_endpoints()
+    agy_cli = resolve_tool_bin("agy")
+    has_app = Path("/Applications/Antigravity.app").exists()
 
-
-def probe_t3code(secrets: RuntimeSecrets) -> dict[str, Any]:
-    """Check t3code CLI & local server availability."""
-    t3_bin = _resolve_t3_binary()
-    url = secrets.t3code_url.rstrip("/")
-    listening = False
-    try:
-        req = urllib.request.Request(url, method="HEAD")
-        with NO_PROXY_OPENER.open(req, timeout=1.5):
-            listening = True
-    except urllib.error.HTTPError:
-        listening = True
-    except (urllib.error.URLError, TimeoutError, OSError):
-        listening = False
-
-    if not t3_bin and not listening:
+    if endpoints:
+        ver = str(endpoints[0][2] or "").strip()
+        ver_disp = f" v{ver}" if ver else ""
+        cli_note_zh = " · agy CLI 就绪" if agy_cli else ""
+        cli_note_en = " · agy CLI ready" if agy_cli else ""
         return {
-            "id": "t3code",
-            "name": "T3 Code (多Agent移动端/Web控制台)",
-            "name_en": "T3 Code (Mobile/Web Worktree IDE)",
-            "repo": "pingdotgg/t3code",
-            "tone": "muted",
-            "status": "未安装",
-            "status_en": "Not Installed",
-            "detail": "替代自研 Telegram 交互，原生管理 Antigravity/Claude/Codex + Worktree + 手机端审批",
-            "detail_en": "Mobile/Web coding & live Git worktree diffs for Antigravity, Claude Code, and Codex",
+            "id": "antigravity",
+            "name": "Antigravity 2.0",
+            "name_en": "Antigravity 2.0",
+            "repo": "google/antigravity",
+            "tone": "live",
+            "status": f"官方直连{ver_disp}",
+            "status_en": f"Live LS RPC{ver_disp}",
+            "detail": f"本机 Language Server 环回直连{cli_note_zh} · 原生 IDE / Swarm / 子代理主执行面",
+            "detail_en": f"Local Language Server RPC active{cli_note_en} · native IDE, CLI & Swarm runtime",
             "action_url": "",
-            "cli_installed": False,
+            "cli_installed": bool(agy_cli),
+            "ls_version": ver,
         }
 
-    connect_note = "本地 127.0.0.1:3773 就绪（运行 `t3 up` 开启手机远程 / T3 Connect）"
-    connect_note_en = "Local 127.0.0.1:3773 ready (run `t3 up` for T3 Connect remote relay)"
-    if t3_bin and listening:
-        try:
-            proc = subprocess.run(
-                wrap_cmd([str(t3_bin), "status", "--json"]),
-                capture_output=True,
-                text=True,
-                timeout=4,
-            )
-            if proc.returncode == 0 and "{" in proc.stdout:
-                st = json.loads(proc.stdout)
-                if (st.get("connect") or {}).get("enabled"):
-                    connect_note = "T3 Connect 远程中继已开启 · 手机与桌面实时同步"
-                    connect_note_en = "T3 Connect QUIC relay active · Mobile & Desktop synced"
-                elif (st.get("lan") or {}).get("enabled"):
-                    connect_note = "LAN / Tailscale 局域网直连已开启"
-                    connect_note_en = "LAN / Tailscale direct access active"
-        except (subprocess.SubprocessError, OSError, json.JSONDecodeError):
-            pass
+    if agy_cli or has_app:
+        return {
+            "id": "antigravity",
+            "name": "Antigravity 2.0",
+            "name_en": "Antigravity 2.0",
+            "repo": "google/antigravity",
+            "tone": "local",
+            "status": "已安装 · 待启动",
+            "status_en": "Installed · Standby",
+            "detail": "打开 Antigravity 2.0 或运行 agy 自动直连 5h + 1周双周期配额",
+            "detail_en": "Launch Antigravity 2.0 or agy to stream live 5h + 7d quotas",
+            "action_url": "",
+            "cli_installed": bool(agy_cli),
+            "ls_version": "",
+        }
 
     return {
-        "id": "t3code",
-        "name": "T3 Code (pingdotgg/t3code)",
-        "name_en": "T3 Code (pingdotgg/t3code)",
-        "repo": "pingdotgg/t3code",
-        "tone": "live" if listening else "warn",
-        "status": f"🟢 运行中 ({url})" if listening else "🟡 已安装 · 服务未启动",
-        "status_en": f"🟢 Running ({url})" if listening else "🟡 Installed · Stopped",
-        "detail": connect_note,
-        "detail_en": connect_note_en,
-        "action_url": url if listening else "",
-        "cli_installed": bool(t3_bin),
+        "id": "antigravity",
+        "name": "Antigravity 2.0",
+        "name_en": "Antigravity 2.0",
+        "repo": "google/antigravity",
+        "tone": "muted",
+        "status": "未检测到",
+        "status_en": "Not Detected",
+        "detail": "安装并登录 Antigravity 2.0 (Google AI Ultra) 开启原生遥测",
+        "detail_en": "Install & sign in to Antigravity 2.0 for native telemetry",
+        "action_url": "",
+        "cli_installed": False,
+        "ls_version": "",
     }
 
 
@@ -275,21 +252,19 @@ def invalidate_bridge_cache() -> None:
 
 
 def collect_bridge_statuses(secrets: RuntimeSecrets, force: bool = False) -> list[dict[str, Any]]:
-    """Collect cached status badges for all integrated open-source wheels concurrently."""
+    """Collect cached status badges for native Antigravity and integrated open-source wheels concurrently."""
     global _BRIDGE_TS, _BRIDGE_DATA
     with _BRIDGE_LOCK:
         if not force and _BRIDGE_DATA is not None and (time.time() - _BRIDGE_TS) < BRIDGE_TTL_SEC:
             return _BRIDGE_DATA
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
-        f_t3 = pool.submit(probe_t3code, secrets)
-        f_maus = pool.submit(probe_openmausbot, secrets)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+        f_agy = pool.submit(probe_antigravity_native)
         f_lens = pool.submit(probe_agy_lens)
         f_ad = pool.submit(probe_agent_desktop)
         f_not = pool.submit(probe_notifier_wheel, secrets)
         items = [
-            f_t3.result(),
-            f_maus.result(),
+            f_agy.result(),
             f_lens.result(),
             f_ad.result(),
             f_not.result(),
@@ -304,7 +279,7 @@ def run_wakeup_trigger() -> tuple[bool, str]:
     """Trigger model warmup / 5-hour rolling window check via antigravity-usage if signed in."""
     au_bin = resolve_tool_bin("antigravity-usage")
     if au_bin is None:
-        return False, "未安装 antigravity-usage，请使用 T3 Code 或 Antigravity 发一条轻提示词开启 5h 窗口"
+        return False, "未安装 antigravity-usage，请直接在 Antigravity 发一条轻提示词开启 5h 窗口"
     try:
         proc = subprocess.run(
             wrap_cmd([str(au_bin), "wakeup"]),
@@ -318,37 +293,6 @@ def run_wakeup_trigger() -> tuple[bool, str]:
         return False, out or f"wakeup 退出码 {proc.returncode}"
     except (subprocess.SubprocessError, OSError) as exc:
         return False, f"wakeup 执行异常: {exc}"
-
-
-def create_t3_pair_link(secrets: RuntimeSecrets) -> tuple[bool, str, str]:
-    """Mint a single-use T3 Code pairing URL on the running local server."""
-    t3_bin = _resolve_t3_binary()
-    if t3_bin is None:
-        return False, "未找到 `t3` CLI", ""
-
-    url = secrets.t3code_url.rstrip("/")
-    env = os.environ.copy()
-    env["NO_PROXY"] = "127.0.0.1,localhost"
-    env["no_proxy"] = "127.0.0.1,localhost"
-
-    cmd = [str(t3_bin), "pair", "--ttl", "1h", "--label", "Fleet-Hub Browser"]
-    t3_home_env = os.environ.get("T3CODE_HOME")
-    t3_home = Path(t3_home_env) if t3_home_env else (WORKSPACE_ROOT / "tools" / "t3code-home")
-    if t3_home.exists():
-        env["T3CODE_HOME"] = str(t3_home)
-        cmd.extend(["--base-dir", str(t3_home)])
-
-    try:
-        proc = subprocess.run(wrap_cmd(cmd), capture_output=True, text=True, timeout=15, env=env)
-        out = (proc.stdout or proc.stderr or "").strip()
-        tok_match = re.search(r"#token=([A-Za-z0-9_-]+)", out) or re.search(r"(?im)^\s*Token:\s*([A-Za-z0-9_-]+)", out)
-        if tok_match:
-            token = tok_match.group(1)
-            return proc.returncode == 0, out or f"Token: {token}", f"{url}/pair#token={token}"
-        url_match = re.search(r"https?://[^\s]+/pair#token=[A-Za-z0-9_-]+", out)
-        return proc.returncode == 0, out or f"exit={proc.returncode}", (url_match.group(0) if url_match else "")
-    except (subprocess.SubprocessError, OSError) as exc:
-        return False, f"生成 T3 配对码失败: {exc}", ""
 
 
 def _starred_api_path(repository: str) -> str | None:

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Turnkey idempotent bootstrapper for Google AI Ultra Maximizer (Fleet-Hub v2.1)
+# Turnkey idempotent bootstrapper for Google AI Ultra Maximizer (Fleet-Hub v3.0)
 # Usage: ./scripts/bootstrap.sh [--minimal | --with-wheels | --with-skills | --all] [--start-service]
 set -euo pipefail
 
@@ -16,7 +16,6 @@ fi
 
 WITH_WHEELS=0
 WITH_SKILLS=0
-WITH_MAUSBOT=0
 START_SERVICE=0
 
 for arg in "$@"; do
@@ -24,16 +23,12 @@ for arg in "$@"; do
     --minimal)
       WITH_WHEELS=0
       WITH_SKILLS=0
-      WITH_MAUSBOT=0
       ;;
     --with-wheels)
       WITH_WHEELS=1
       ;;
     --with-skills)
       WITH_SKILLS=1
-      ;;
-    --with-mausbot)
-      WITH_MAUSBOT=1
       ;;
     --all)
       WITH_WHEELS=1
@@ -51,9 +46,8 @@ Usage:
 
 Options:
   --minimal         Install core CLI (`ultra` / `fleet`) + initialize config only (default)
-  --with-wheels     Also install core open-source wheels (`t3code`, `agy-lens`, `agent-desktop`, `antigravity-usage`, `apprise`)
+  --with-wheels     Also install core open-source wheels (`agy-lens`, `agent-desktop`, `antigravity-usage`, `apprise`)
   --with-skills     Also install curated `mattpocock/skills`, `agent-desktop`, `ultra-quota-advisor`, and `gemini-web-research` into ~/.agents/skills
-  --with-mausbot    [Optional] Also install `milind-soni/OpenMausBot` (unattended routines / BYO Linux VPS)
   --all             Equivalent to `--with-wheels --with-skills`
   --start-service   Install and start the background daemon (`launchd` on macOS, `systemd --user` on Linux)
   -h, --help        Show this help message
@@ -95,16 +89,7 @@ if [ "${WITH_WHEELS}" -eq 1 ]; then
   echo "==> Installing recommended open-source wheels..."
   VENDOR_DIR="${WORKSPACE_ROOT}/tools/vendor"
   NPM_PREFIX="${WORKSPACE_ROOT}/tools/npm-global"
-  T3_HOME="${T3CODE_HOME:-${WORKSPACE_ROOT}/tools/t3code-home}"
-  mkdir -p "${VENDOR_DIR}" "${NPM_PREFIX}" "${T3_HOME}"
-
-  if ! command -v t3 >/dev/null 2>&1; then
-    echo "  -> Installing pingdotgg/t3code..."
-    T3CODE_HOME="${T3_HOME}" T3CODE_INSTALL_BIN_DIR="${BIN_DIR}" sh -c "$(curl -fsSL https://t3.codes/install.sh)" || \
-      echo "  [warn] t3code install failed; retry with HTTPS_PROXY set if needed."
-  else
-    echo "  -> t3code already installed ($(command -v t3))"
-  fi
+  mkdir -p "${VENDOR_DIR}" "${NPM_PREFIX}"
 
   if [ ! -d "${VENDOR_DIR}/agy-lens/.git" ]; then
     echo "  -> Cloning Aoike123/agy-lens..."
@@ -124,22 +109,6 @@ if [ "${WITH_WHEELS}" -eq 1 ]; then
       echo "  [warn] npm wheel installation failed."
     [ -x "${NPM_PREFIX}/bin/agent-desktop" ] && ln -sf "${NPM_PREFIX}/bin/agent-desktop" "${BIN_DIR}/agent-desktop"
     [ -x "${NPM_PREFIX}/bin/antigravity-usage" ] && ln -sf "${NPM_PREFIX}/bin/antigravity-usage" "${BIN_DIR}/antigravity-usage"
-
-    if [ "${WITH_MAUSBOT}" -eq 1 ]; then
-      if command -v node >/dev/null 2>&1 && node -e 'process.exit(parseInt(process.versions.node.split(".")[0], 10) >= 24 ? 0 : 1)'; then
-        echo "  -> [Optional] Installing milind-soni/OpenMausBot (Node >= 24 detected)..."
-        mkdir -p "${WORKSPACE_ROOT}/tools/openmausbot-home" "${WORKSPACE_ROOT}/tools/openmausbot-profiles" "${HOME}/.config/openmausbot"
-        ln -sfn "${WORKSPACE_ROOT}/tools/openmausbot-home" "${HOME}/.openmausbot"
-        ln -sfn "${WORKSPACE_ROOT}/tools/openmausbot-profiles" "${HOME}/.openmausbot-profiles"
-        npm install -g --prefix "${NPM_PREFIX}" openmausbot || echo "  [warn] openmausbot npm install failed."
-        [ -x "${NPM_PREFIX}/bin/openmausbot" ] && ln -sf "${NPM_PREFIX}/bin/openmausbot" "${BIN_DIR}/openmausbot"
-        if [ -x "${BIN_DIR}/openmausbot" ]; then
-          "${BIN_DIR}/openmausbot" doctor --data --fix --data-dir "${WORKSPACE_ROOT}/tools/openmausbot-home" >/dev/null 2>&1 || true
-        fi
-      else
-        echo "  [skip] OpenMausBot CLI requires Node.js >= 24 (skipping; desktop .dmg/.exe still works)."
-      fi
-    fi
   else
     echo "  [skip] npm not found; install Node.js >= 18 to install agent-desktop and antigravity-usage."
   fi
@@ -205,9 +174,9 @@ if [ "${WITH_SKILLS}" -eq 1 ]; then
   fi
 
   for skill_name in ultra-quota-advisor gemini-web-research; do
-    if [ -d "${REPO_ROOT}/teams/ultra-solo-studio/skills/${skill_name}" ]; then
+    if [ -d "${REPO_ROOT}/skills/${skill_name}" ]; then
       rm -rf "${SKILLS_TARGET}/${skill_name}"
-      cp -R "${REPO_ROOT}/teams/ultra-solo-studio/skills/${skill_name}" "${SKILLS_TARGET}/${skill_name}"
+      cp -R "${REPO_ROOT}/skills/${skill_name}" "${SKILLS_TARGET}/${skill_name}"
     fi
   done
 

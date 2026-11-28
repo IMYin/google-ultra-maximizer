@@ -1,6 +1,6 @@
 # Google AI Ultra Maximizer
 
-Domain vocabulary for orchestrating independent Google AI Ultra compute quotas, asynchronous approval gates, and open-source developer tools without reinventing wheels.
+Domain vocabulary for orchestrating independent Google AI Ultra compute quotas, asynchronous approval gates, and native Antigravity 2.0 workflows without reinventing wheels.
 
 ## Language
 
@@ -17,7 +17,7 @@ The deterministic recommendation engine that compares remaining percentages and 
 _Avoid_: Scheduler, planner, heuristic
 
 **Wheel**:
-An off-the-shelf open-source project composed into the architecture (`T3 Code`, `Agy Lens`, `Agent Desktop`, `Apprise`, `gflow-cli`, `google-colab-cli`, and optional `OpenMausBot`) instead of maintaining custom glue code.
+An off-the-shelf open-source project composed alongside native **Antigravity 2.0** (`Agy Lens`, `Agent Desktop`, `Apprise`, `gflow-cli`, `google-colab-cli`) instead of maintaining custom glue code.
 _Avoid_: Plugin, dependency, integration
 
 **Approval Ticket**:
@@ -29,7 +29,7 @@ An isolated Git checkout directory created under `<workspace>/worktrees/` on a p
 _Avoid_: Workspace, folder, sandbox
 
 **Yellow Zone**:
-Work that runs tests and builds freely inside an isolated **Worktree** but cannot touch `main` or remotes without explicit human confirmation in **T3 Code** or the Cockpit.
+Work that runs tests and builds freely inside an isolated **Worktree** but cannot touch `main` or remotes without explicit human confirmation in the Cockpit or `_APPROVAL_CENTER.md`.
 _Avoid_: Staging, draft
 
 **Red Zone**:

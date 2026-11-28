@@ -54,13 +54,13 @@ def render_approval_center(db: FleetDB, ai_hub: Path, secrets: RuntimeSecrets) -
     merged = db.list_tasks(status="MERGED", limit=10)
 
     triage_mode = f"Paid Gemini API (`{secrets.gemini_triage_model}`)" if secrets.paid_api_enabled else "零 Token 规则引擎（待填入 GEMINI_PAID_API_KEY 自动升级）"
-    notify_mode = f"Apprise 已接入 ({len(secrets.all_notify_urls())} 通道) ✅" if secrets.notify_enabled else "未配置（交互审批可直接用 T3 Code / 驾驶舱）"
+    notify_mode = f"Apprise 已接入 ({len(secrets.all_notify_urls())} 通道) ✅" if secrets.notify_enabled else "未配置（交互审批可直接用驾驶舱）"
 
     lines: list[str] = [
         "# Google AI Ultra Maximizer · 统一审批中心 (`_APPROVAL_CENTER`)",
         "",
         f"> **监听模式**: 0-Token FSEvents/Stat | **分诊引擎**: {triage_mode} | **推送**: {notify_mode}",
-        f"> **电脑端驾驶舱**: `http://127.0.0.1:{secrets.fleet_port}` | **手机/Web 多 Agent**: `{secrets.t3code_url}`",
+        f"> **本地驾驶舱**: `http://127.0.0.1:{secrets.fleet_port}` | **原生执行面**: Antigravity 2.0",
         "",
         "**手机端审批操作**：在下方任意黄区工单中，将 `- [ ] APPROVE` 改为 `- [x] APPROVE`（或勾选 `REVISE:` 并写修改意见）保存，本地 `fleetd` 将在数秒内自动合入 `main`、清理隔离 Worktree 并更新项目台账。",
         "",

@@ -147,8 +147,8 @@ def build_burn_recommendations(
                 "pool_en": "Claude 5.5 5h Rolling Pool",
                 "title": f"Claude Opus / Sonnet 5.5 还有 {c5_5h_pct:.0f}% 空转（{reset_txt}{c5_wk_note}）{gem_note}",
                 "title_en": f"Claude Opus / Sonnet 5.5 is {c5_5h_pct:.0f}% idle ({reset_en}{c5_wk_note_en}){gem_note_en}",
-                "action": "立即把编码、Review、重构线程在 T3 Code 或 Antigravity 切换到 Claude Opus 5.5，零损耗保护 Gemini 周池。",
-                "action_en": "Switch coding, reviews, and threads in T3 Code / Antigravity to Claude 5.5 to protect Gemini Weekly.",
+                "action": "立即把编码、Review、子代理线程在 Antigravity 切换到 Claude Opus 5.5，零损耗保护 Gemini 周池。",
+                "action_en": "Switch coding, reviews, and threads in Antigravity to Claude 5.5 to protect Gemini Weekly.",
                 "command": "ultra wakeup",
             }
         )
@@ -170,8 +170,8 @@ def build_burn_recommendations(
                 "pool_en": "AI Ultra Dual 5h + Weekly",
                 "title": title_zh,
                 "title_en": title_en,
-                "action": "已解锁最高档双 5h + 1周滚动双池：在 T3 Code 里可并行跑 Gemini 4 Neon/Carbon 与 Claude Opus 5.5，兼顾每 5 小时刷新与每周上限。",
-                "action_en": "Both Gemini 4 and Claude 5.5 track 5h + 7d weekly rolling limits independently—run heavy parallel coding threads in T3 Code.",
+                "action": "已解锁最高档双 5h + 1周滚动双池：在 Antigravity IDE / Swarm 中可并行跑 Gemini 4 Neon/Carbon 与 Claude Opus 5.5，兼顾每 5 小时刷新与每周上限。",
+                "action_en": "Both Gemini 4 and Claude 5.5 track 5h + 7d weekly rolling limits independently—run heavy parallel threads in Antigravity.",
                 "command": "ultra wakeup",
             }
         )
@@ -232,8 +232,8 @@ def build_burn_recommendations(
                     "pool_en": "GCP Grant Expiration Alert",
                     "title": f"一笔 ${eg_rem:.2f} 赠金将在 {eg_days} 天后（{eg_end}）过期",
                     "title_en": f"${eg_rem:.2f} GCP grant expires in {eg_days}d ({eg_end})",
-                    "action": "建议优先把这部分额度用于 Gemini Batch API（半价）或 Cloud VM/存储开销，避免过期作废。",
-                    "action_en": "Burn this grant on Gemini Batch API (50% off) or BYO Linux VPS / Cloud Storage before expiry.",
+                    "action": "建议优先把这部分额度用于 Gemini Batch API（半价）或 Cloud VM / 存储开销，避免过期作废。",
+                    "action_en": "Burn this grant on Gemini Batch API (50% off) or Cloud VM / Cloud Storage before expiry.",
                     "command": "https://console.cloud.google.com/billing/credits",
                 }
             )
@@ -243,17 +243,17 @@ def build_burn_recommendations(
                     "severity": "info",
                     "pool": "Google Cloud 赠金实测账本",
                     "pool_en": "GCP Billing Credits Ledger",
-                    "title": f"GCP 赠金池实测可用 ${rem_usd:.2f} / ${bud_usd:.2f}（VPS 与云服务已扣 ${used_usd:.2f}）",
-                    "title_en": f"GCP Credits: ${rem_usd:.2f} / ${bud_usd:.2f} left (${used_usd:.2f} spent on VPS/API)",
+                    "title": f"GCP 赠金池实测可用 ${rem_usd:.2f} / ${bud_usd:.2f}（Cloud VM 与云服务已扣 ${used_usd:.2f}）",
+                    "title_en": f"GCP Credits: ${rem_usd:.2f} / ${bud_usd:.2f} left (${used_usd:.2f} spent on Cloud/API)",
                     "action": (
-                        f"最早一笔剩余 ${eg_rem:.2f} 到期日为 {eg_end}（有效期内可跨月抵扣 VPS/Gemini API）。"
+                        f"最早一笔剩余 ${eg_rem:.2f} 到期日为 {eg_end}（有效期内可跨月抵扣 Cloud VM / Gemini API）。"
                         if eg_end
-                        else "可随时点卡片上的「自动读取 GCP 赠金」刷新最新扣费。"
+                        else "可随时点卡片上的「同步 GCP 赠金」刷新最新扣费。"
                     ),
                     "action_en": (
-                        f"Earliest tranche ${eg_rem:.2f} expires {eg_end} (covers VPS & Gemini Batch API)."
+                        f"Earliest tranche ${eg_rem:.2f} expires {eg_end} (covers Cloud VM & Gemini Batch API)."
                         if eg_end
-                        else "Click Auto-Sync GCP Credits on the card to refresh deductions."
+                        else "Click Sync GCP Credits on the card to refresh deductions."
                     ),
                     "command": "ultra sync-gcp-credits",
                 }
@@ -305,6 +305,7 @@ def build_burn_recommendations(
         roi = d7_usd / 249.99
         advice.append(
             {
+                "kind": "roi",
                 "severity": "info",
                 "pool": "Agy-Lens 算力回本统计",
                 "pool_en": "Agy-Lens 7d ROI",
@@ -324,7 +325,7 @@ def compute_routing_verdict(
     lens_stats: dict[str, Any] | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
-    """Produce a deterministic, zero-token routing verdict for OpenMausBot, T3 Code, and UI."""
+    """Produce a deterministic, zero-token routing verdict for native Antigravity and UI."""
     cur = now or datetime.now()
     last_day = calendar.monthrange(cur.year, cur.month)[1]
     days_left = max(1, last_day - cur.day + 1)
@@ -371,13 +372,13 @@ def compute_routing_verdict(
             c5_en = _fmt_dual_en(c5_5h_val, c5_wk_val, c5_eff_val)
             headline_zh = f"AI Ultra 双池充沛（Gemini {gem_zh} · Claude 5.5 {c5_zh}）"
             headline_en = f"AI Ultra Dual Pools Ready (Gemini {gem_en} · Claude 5.5 {c5_en})"
-            reason_zh = "两个主池均同时享有每 5 小时与 1 周滚动限额：T3 Code 可自由并行使用 Claude Opus 5.5 与 Gemini 4 Neon/Carbon。"
-            reason_en = "Both Gemini 4 and Claude 5.5 have healthy 5h + 7d weekly headroom—run heavy parallel threads in T3 Code."
+            reason_zh = "两个主池均同时享有每 5 小时与 1 周滚动限额：Antigravity 可自由并行使用 Claude Opus 5.5 与 Gemini 4 Neon/Carbon。"
+            reason_en = "Both Gemini 4 and Claude 5.5 have healthy 5h + 7d weekly headroom—run heavy parallel threads in Antigravity."
         else:
             headline_zh = f"AI Ultra 双 5h 滚动池全开（Gemini 4 {gem_eff_val:.0f}% · Claude 5.5 {c5_eff_val:.0f}%）"
             headline_en = f"AI Ultra Dual 5h Rolling Active (Gemini 4 {gem_eff_val:.0f}% · Claude 5.5 {c5_eff_val:.0f}%)"
-            reason_zh = "两个主池均每 5 小时独立刷新：T3 Code 可自由并行使用 Claude Opus 5.5 与 Gemini 4 Neon/Carbon。"
-            reason_en = "Both Gemini 4 and Claude 5.5 refresh every 5 hours independently—run heavy parallel threads in T3 Code."
+            reason_zh = "两个主池均每 5 小时独立刷新：Antigravity 可自由并行使用 Claude Opus 5.5 与 Gemini 4 Neon/Carbon。"
+            reason_en = "Both Gemini 4 and Claude 5.5 refresh every 5 hours independently—run heavy parallel threads in Antigravity."
     elif c5_eff_val is not None and c5_eff_val >= 40.0 and (gem_wk_val is None or gem_wk_val < 55.0):
         mode = "5h_harvest"
         coding_model = "antigravity/claude-opus-5-5"
@@ -411,10 +412,10 @@ def compute_routing_verdict(
         mode = "conserve_weekly"
         coding_model = "antigravity/gemini-3.8-flash"
         triage_model = "antigravity/gemini-3.8-flash"
-        headline_zh = f"主池警戒（Gemini 仅剩 {gem_eff_val:.1f}%）· 建议切 Codex / 外部池或等待 5h 重置"
-        headline_en = f"Primary Pool Low ({gem_eff_val:.1f}%) · Prefer Codex / Paid Batch or Wait 5h Reset"
-        reason_zh = "Gemini 与 5h 池当前余量均偏低；轻量任务切 Flash，重度编码可路由至 Codex 或等待下一轮 5h 窗口。"
-        reason_en = "Both Antigravity buckets are constrained; route lightweight triage to Flash or heavy coding to Codex until the next 5h reset."
+        headline_zh = f"主池警戒（Gemini 仅剩 {gem_eff_val:.1f}%）· 建议切轻量 Flash / Batch API 或等待 5h 重置"
+        headline_en = f"Primary Pool Low ({gem_eff_val:.1f}%) · Prefer Gemini 3.8 Flash / Paid Batch or Wait 5h Reset"
+        reason_zh = "Gemini 与 5h 池当前余量均偏低；轻量任务切 Flash，批处理可走 Paid Batch 或等待下一轮 5h 窗口。"
+        reason_en = "Both Antigravity buckets are constrained; route lightweight triage to Flash or bulk evals to Batch API until the next 5h reset."
     else:
         mode = "balanced"
         coding_model = "antigravity/gemini-4-neon"

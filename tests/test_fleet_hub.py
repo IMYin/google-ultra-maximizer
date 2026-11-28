@@ -30,14 +30,13 @@ from fleet_hub.agy_quota_probe import (
     probe_antigravity_quotas,
 )
 from fleet_hub.approval_md import process_markdown_decisions, render_approval_center
-from fleet_hub.bridges import check_github_starred, collect_bridge_statuses, star_github_repo
+from fleet_hub.bridges import check_github_starred, collect_bridge_statuses, probe_antigravity_native, star_github_repo
 from fleet_hub.burn_advisor import build_burn_recommendations, compute_routing_verdict
 from fleet_hub.cockpit import CockpitServer
 from fleet_hub.cockpit_ui import render_cockpit_page
 from fleet_hub.config import RuntimeSecrets, mask_email, save_settings_patch
 from fleet_hub.db import FleetDB
 from fleet_hub.gcp_credits_probe import parse_gcp_credits_table
-from fleet_hub.mausbot_bridge import probe_openmausbot, rebalance_openmausbot_models, render_team_yaml
 from fleet_hub.sanitizer import parse_inbox_sections, verify_task_assets
 from fleet_hub.telemetry import (
     _probe_ai_studio,
@@ -46,6 +45,7 @@ from fleet_hub.telemetry import (
     collect_cockpit_snapshot,
     invalidate_telemetry_cache,
 )
+from fleet_hub.updater import check_for_updates, parse_semver, perform_self_update
 
 
 class TestFleetHub(unittest.TestCase):
@@ -337,88 +337,24 @@ class TestFleetHub(unittest.TestCase):
         urls = sec.all_notify_urls()
         self.assertEqual(urls, ["bark://token@host", "tgram://123:ABC/999"])
         bridges = collect_bridge_statuses(sec, force=True)
-        self.assertEqual({b["id"] for b in bridges}, {"t3code", "openmausbot", "agy_lens", "agent_desktop", "apprise"})
+        self.assertEqual({b["id"] for b in bridges}, {"antigravity", "agy_lens", "agent_desktop", "apprise"})
 
-    def test_openmausbot_team_render_and_sync_endpoint(self) -> None:
-        rendered = render_team_yaml()
-        self.assertTrue(rendered.exists())
-        text = rendered.read_text(encoding="utf-8")
-        self.assertNotIn("{{WORKSPACE_ROOT}}", text)
-        self.assertNotIn("{{PROJECTS_ROOT}}", text)
-        self.assertNotIn("{{SKILL_PATH}}", text)
-        self.assertNotIn("{{WEB_SKILL_PATH}}", text)
-        self.assertIn("Ultra Chief", text)
-        self.assertIn("VPS Cloud Scout", text)
-        self.assertIn("prune: true", text)
-        self.assertTrue((Path(__file__).resolve().parent.parent / "teams" / "ultra-solo-studio" / "skills" / "gemini-web-research" / "SKILL.md").exists())
-        # Lean 2-bot optional pack (each has 2 skills + explicit Antigravity 5h model)
-        self.assertEqual(text.count("model: antigravity/"), 2)
-        self.assertEqual(text.count("- file: "), 4)
-
-        sec = RuntimeSecrets(openmausbot_url="http://127.0.0.1:65531", vps_ssh_alias="my-gcp-vps")
-        with mock.patch("fleet_hub.mausbot_bridge.resolve_tool_bin", return_value=Path("/usr/local/bin/openmausbot")), mock.patch(
-            "fleet_hub.mausbot_bridge._maus_app_exists", return_value=False
+        with (
+            mock.patch("fleet_hub.bridges.discover_daemon_endpoints", return_value=[("http://127.0.0.1:55271", "tok", "2.36.0")]),
+            mock.patch("fleet_hub.bridges.resolve_tool_bin", return_value=Path("/usr/local/bin/agy")),
         ):
-            card = probe_openmausbot(sec)
-            self.assertEqual(card["id"], "openmausbot")
-            self.assertEqual(card["tone"], "muted")
-            self.assertIn("my-gcp-vps", card["detail"])
+            live_agy = probe_antigravity_native()
+            self.assertEqual(live_agy["id"], "antigravity")
+            self.assertEqual(live_agy["tone"], "live")
+            self.assertIn("v2.36.0", live_agy["status"])
 
-        with tempfile.TemporaryDirectory(prefix="fleet-maus-") as td:
-            root = Path(td)
-            db = FleetDB(root / "test.sqlite")
-            ai_hub = root / "AI-Projects"
-            ai_hub.mkdir()
-            c = CockpitServer(db, ai_hub, port=0)
-            port = c.server.server_address[1]
-            t = threading.Thread(target=c.serve_forever, daemon=True)
-            t.start()
-            try:
-                fake_snap = {
-                    "pools": [],
-                    "advisor": [],
-                    "bridges": [{"id": "openmausbot", "name": "OpenMausBot", "tone": "live", "status": "ok", "detail": "5 bots", "action_url": "http://127.0.0.1:8799"}],
-                    "lens": None,
-                }
-                with mock.patch("fleet_hub.cockpit.collect_cockpit_snapshot", return_value=fake_snap), mock.patch(
-                    "fleet_hub.cockpit.apply_ultra_team", return_value=(True, "synced 5 bots")
-                ):
-                    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
-                    conn.request("GET", "/api/sync-maus-team")
-                    r_get = conn.getresponse()
-                    r_get.read()
-                    self.assertEqual(r_get.status, 302)
-
-                    conn.request("GET", "/?lang=en&privacy=1")
-                    r_ui = conn.getresponse()
-                    html_txt = r_ui.read().decode("utf-8")
-                    self.assertEqual(r_ui.status, 200)
-                    self.assertIn("/api/sync-maus-team", html_txt)
-                    self.assertIn("/api/maus-pair", html_txt)
-
-                    body = urllib.parse.urlencode({"csrf": c.csrf_token})
-                    conn.request("POST", "/api/sync-maus-team", body=body, headers={"Content-Type": "application/x-www-form-urlencoded"})
-                    r_post = conn.getresponse()
-                    r_post.read()
-                    self.assertEqual(r_post.status, 303)
-
-                    with mock.patch("fleet_hub.cockpit.create_mausbot_pair_link", return_value=(True, "ok", "http://127.0.0.1:8799/pair#code=AAAA-BBBB-CCCC")):
-                        conn.request("POST", "/api/maus-pair", body=body, headers={"Content-Type": "application/x-www-form-urlencoded"})
-                        r_pair = conn.getresponse()
-                        r_pair.read()
-                        self.assertEqual(r_pair.status, 303)
-                        self.assertEqual(r_pair.getheader("Location"), "http://127.0.0.1:8799/pair#code=AAAA-BBBB-CCCC")
-
-                    with mock.patch("fleet_hub.cockpit.create_t3_pair_link", return_value=(True, "ok", "http://127.0.0.1:3773/pair#token=FRESH123456")):
-                        conn.request("POST", "/api/t3-pair", body=body, headers={"Content-Type": "application/x-www-form-urlencoded"})
-                        r_t3 = conn.getresponse()
-                        r_t3.read()
-                        self.assertEqual(r_t3.status, 303)
-                        self.assertEqual(r_t3.getheader("Location"), "http://127.0.0.1:3773/pair#token=FRESH123456")
-                    conn.close()
-            finally:
-                c.shutdown()
-                t.join(timeout=2)
+        with (
+            mock.patch("fleet_hub.bridges.discover_daemon_endpoints", return_value=[]),
+            mock.patch("fleet_hub.bridges.resolve_tool_bin", return_value=None),
+            mock.patch("fleet_hub.bridges.Path.exists", return_value=False),
+        ):
+            muted_agy = probe_antigravity_native()
+            self.assertEqual(muted_agy["tone"], "muted")
 
     def test_paid_api_50_budget_and_settings_endpoint(self) -> None:
         with tempfile.TemporaryDirectory(prefix="fleet-cred-") as td:
@@ -589,6 +525,33 @@ class TestFleetHub(unittest.TestCase):
                     f"personal gmail found in {path}: {email}",
                 )
 
+    def test_no_legacy_t3code_or_openmausbot_references(self) -> None:
+        """Ensure legacy third-party proxy IDE & bot references are completely removed."""
+        allowed_exts = (".py", ".sh", ".md", ".example", ".yml", ".yaml")
+        forbidden = re.compile(
+            r"\b("
+            + "|".join(
+                [
+                    "t3" + "code",
+                    "t3-" + "pair",
+                    "fix-" + "t3",
+                    "open" + "mausbot",
+                    "maus" + "bot",
+                ]
+            )
+            + r")\b",
+            re.IGNORECASE,
+        )
+        for path in HUB_ROOT.rglob("*"):
+            if path.is_dir():
+                continue
+            if any(part in (".git", "state", "logs", "__pycache__") for part in path.parts):
+                continue
+            if path.name == "test_fleet_hub.py" or path.suffix not in allowed_exts:
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")
+            self.assertIsNone(forbidden.search(text), f"legacy reference found in {path}")
+
     def test_routing_verdict_and_telemetry_cache_by_privacy(self) -> None:
         cards_harvest = [
             {"pool": "agy_gemini_weekly", "pct": 11.7},
@@ -629,45 +592,28 @@ class TestFleetHub(unittest.TestCase):
                 collect_cockpit_snapshot(db, ai_hub, privacy=False)
                 self.assertEqual(p_agy.call_count, 3)
 
-    def test_rebalance_openmausbot_and_wakeup_endpoints(self) -> None:
-        sec = RuntimeSecrets(openmausbot_url="http://127.0.0.1:8799")
-        bots_payload = {
-            "bots": [
-                {"name": "Ultra Chief", "busy": False, "activity": "idle", "modelSelection": {"instanceId": "antigravity", "model": "gemini-3.8-flash"}},
-                {"name": "Ultra Architect", "busy": False, "activity": "idle", "modelSelection": {"instanceId": "antigravity", "model": "claude-opus-5-5"}},
-                {"name": "Flow & Colab Director", "busy": True, "activity": "thinking", "modelSelection": {"instanceId": "antigravity", "model": "gemini-4-carbon"}},
-                {"name": "Mini-Game Factory", "busy": False, "activity": "idle", "modelSelection": {"instanceId": "codex", "model": "gpt-6.2-sol"}},
-            ]
+    def test_native_antigravity_ui_and_removed_legacy_routes(self) -> None:
+        routing = {
+            "mode": "5h_harvest",
+            "headline_zh": "优先切入 Claude 5.5",
+            "headline_en": "Route to Claude 5.5",
+            "reason_zh": "5h 池自动刷新",
+            "reason_en": "5h pool resets",
+            "recommended_coding_model": "antigravity/claude-opus-5-5",
+            "recommended_triage_model": "antigravity/claude-sonnet-5-5",
+            "wakeup_recommended": True,
         }
-        models_payload = {
-            "instances": [
-                {"instanceId": "antigravity", "models": {"options": [{"id": "claude-opus-5-5"}, {"id": "claude-sonnet-5-5"}, {"id": "gemini-3.8-flash"}]}}
-            ]
+        agy_live_card = {
+            "id": "antigravity",
+            "name": "Antigravity 2.0",
+            "tone": "live",
+            "status": "Live LS RPC v2.36.0",
+            "detail": "Native IDE, CLI & Swarm runtime",
+            "action_url": "",
+            "cli_installed": True,
         }
-        routing = {"mode": "5h_harvest", "recommended_coding_model": "antigravity/claude-opus-5-5", "recommended_triage_model": "antigravity/claude-sonnet-5-5"}
 
-        calls: list[list[str]] = []
-
-        def fake_run(cmd, **_kwargs):
-            calls.append(cmd)
-            joined = " ".join(cmd)
-            if " bots " in joined:
-                return mock.Mock(returncode=0, stdout=json.dumps(bots_payload), stderr="")
-            if " models " in joined:
-                return mock.Mock(returncode=0, stdout=json.dumps(models_payload), stderr="")
-            return mock.Mock(returncode=0, stdout="ok", stderr="")
-
-        with mock.patch("fleet_hub.mausbot_bridge.resolve_tool_bin", return_value=Path("/usr/local/bin/openmausbot")), mock.patch(
-            "fleet_hub.mausbot_bridge.subprocess.run", side_effect=fake_run
-        ):
-            ok, msg, changes = rebalance_openmausbot_models(sec, routing)
-            self.assertTrue(ok, msg)
-            # Only Ultra Chief (idle + wrong model) should be switched; Flow Director is busy, Mini-Game is codex
-            self.assertEqual(len(changes), 1)
-            self.assertEqual(changes[0]["bot"], "Ultra Chief")
-            self.assertEqual(changes[0]["to"], "antigravity/claude-sonnet-5-5")
-
-        with tempfile.TemporaryDirectory(prefix="fleet-ops-") as td:
+        with tempfile.TemporaryDirectory(prefix="fleet-native-") as td:
             root = Path(td)
             db = FleetDB(root / "test.sqlite")
             ai_hub = root / "AI-Projects"
@@ -681,7 +627,7 @@ class TestFleetHub(unittest.TestCase):
                     "pools": [
                         {
                             "pool": "agy_claude_5h",
-                            "title": "5h 中文",
+                            "title": "Antigravity Claude 5h",
                             "title_en": "Antigravity Claude 5h Rolling",
                             "badge": "live",
                             "badge_en": "Live LS RPC",
@@ -696,36 +642,22 @@ class TestFleetHub(unittest.TestCase):
                     "advisor": [
                         {
                             "severity": "opportunity",
-                            "pool": "5h 池",
+                            "pool": "Claude 5.5 5h",
                             "pool_en": "Claude 5.5 5h Rolling",
-                            "title": "中文建议",
+                            "title": "Claude 5.5 is 100% idle",
                             "title_en": "Claude 5.5 is 100% idle",
-                            "action": "中文动作",
-                            "action_en": "Switch idle bots to Claude 5.5",
+                            "action": "Switch in Antigravity",
+                            "action_en": "Switch in Antigravity",
                             "command": "ultra wakeup",
                         }
                     ],
                     "routing": routing,
-                    "bridges": [
-                        {
-                            "id": "openmausbot",
-                            "name": "OpenMausBot",
-                            "name_en": "OpenMausBot (milind-soni/OpenMausBot)",
-                            "tone": "live",
-                            "status": "运行中",
-                            "status_en": "Running 2 Bots",
-                            "detail": "中文详情",
-                            "detail_en": "Antigravity ACP active",
-                            "action_url": "http://127.0.0.1:8799",
-                            "bots": [{"name": "Ultra Chief", "instance": "antigravity", "model": "claude-sonnet-5-5", "busy": False}],
-                        }
-                    ],
+                    "bridges": [agy_live_card],
                     "lens": {"d7_usd": 410.0, "d7_calls": 5000},
+                    "capabilities": {"wakeup_cli": True, "gcp_sync_cli": True},
                 }
                 with mock.patch("fleet_hub.cockpit.collect_cockpit_snapshot", return_value=fake_snap) as p_snap, mock.patch(
                     "fleet_hub.cockpit.run_wakeup_trigger", return_value=(True, "woke up")
-                ), mock.patch(
-                    "fleet_hub.cockpit.rebalance_openmausbot_models", return_value=(True, "rebalanced 1", [{"bot": "Ultra Chief"}])
                 ):
                     with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/state", timeout=5) as resp:
                         st = json.loads(resp.read().decode("utf-8"))
@@ -734,13 +666,15 @@ class TestFleetHub(unittest.TestCase):
 
                     with urllib.request.urlopen(f"http://127.0.0.1:{port}/?lang=en&privacy=1", timeout=5) as resp_html:
                         page = resp_html.read().decode("utf-8")
-                        self.assertIn("antigravity/claude-sonnet-5-5", page)
-                        self.assertIn("Antigravity Claude 5h Rolling", page)
-                        self.assertIn("Claude 5.5 is 100% idle", page)
-                        self.assertIn("Running 2 Bots", page)
-                        self.assertIn("table-wrap", page)
-                        self.assertIn("/api/rebalance", page)
+                        self.assertIn("Antigravity 2.0", page)
+                        self.assertIn("gauge-svg", page)
+                        self.assertIn('closedby="any"', page)
                         self.assertIn("/api/wakeup", page)
+                        self.assertNotIn("btnTopStar", page)
+                        self.assertNotIn("t3" + "code", page.lower())
+                        self.assertNotIn("T3CODE_URL", page)
+                        self.assertNotIn("open" + "mausbot", page.lower())
+                        self.assertNotIn("OPENMAUSBOT_URL", page)
 
                     req_wake = urllib.request.Request(
                         f"http://127.0.0.1:{port}/api/wakeup",
@@ -750,136 +684,39 @@ class TestFleetHub(unittest.TestCase):
                     )
                     with urllib.request.urlopen(req_wake, timeout=5) as r_w:
                         self.assertTrue(json.loads(r_w.read().decode("utf-8"))["ok"])
-
-                    req_reb = urllib.request.Request(
-                        f"http://127.0.0.1:{port}/api/rebalance",
-                        data=json.dumps({"csrf": c.csrf_token}).encode("utf-8"),
-                        headers={"Content-Type": "application/json"},
-                        method="POST",
-                    )
-                    with urllib.request.urlopen(req_reb, timeout=5) as r_r:
-                        res_r = json.loads(r_r.read().decode("utf-8"))
-                        self.assertTrue(res_r["ok"])
-                        self.assertEqual(len(res_r["changes"]), 1)
                     self.assertTrue(any(call.kwargs.get("force") is True for call in p_snap.call_args_list))
+
+                    for legacy_route in ("/api/t3-pair", "/api/maus-pair", "/api/sync-maus-team", "/api/rebalance"):
+                        req_leg = urllib.request.Request(
+                            f"http://127.0.0.1:{port}{legacy_route}",
+                            data=json.dumps({"csrf": c.csrf_token}).encode("utf-8"),
+                            headers={"Content-Type": "application/json"},
+                            method="POST",
+                        )
+                        with self.assertRaises(urllib.error.HTTPError) as ctx_leg:
+                            urllib.request.urlopen(req_leg, timeout=5)
+                        self.assertEqual(ctx_leg.exception.code, 404)
             finally:
                 c.shutdown()
                 t.join(timeout=2)
 
-    def test_optional_bot_and_cli_buttons_gated_cleanly(self) -> None:
-        sec = RuntimeSecrets(openmausbot_url="http://127.0.0.1:65531", t3code_url="http://127.0.0.1:3773")
-        with mock.patch("fleet_hub.mausbot_bridge.resolve_tool_bin", return_value=None), mock.patch(
-            "fleet_hub.mausbot_bridge._maus_app_exists", return_value=False
-        ):
-            card = probe_openmausbot(sec)
-            self.assertFalse(card["installed"])
-            self.assertFalse(card["cli_installed"])
-            self.assertEqual(card["bot_count"], 0)
-            self.assertEqual(card["tone"], "muted")
-
-            ok_reb, msg_reb, changes_reb = rebalance_openmausbot_models(sec, {})
-            self.assertFalse(ok_reb)
-            self.assertEqual(changes_reb, [])
-            self.assertIn("T3 Code", msg_reb)
-
-        routing = {
-            "mode": "5h_harvest",
-            "headline_zh": "优先切入 Claude 5.5",
-            "headline_en": "Route to Claude 5.5",
-            "reason_zh": "5h 池自动刷新",
-            "reason_en": "5h pool resets",
-            "recommended_coding_model": "antigravity/claude-opus-5-5",
-            "recommended_triage_model": "antigravity/claude-sonnet-5-5",
-            "wakeup_recommended": True,
-        }
-        t3_live_card = {
-            "id": "t3code",
-            "name": "T3 Code",
-            "tone": "live",
-            "status": "Running",
-            "detail": "ok",
-            "action_url": "http://127.0.0.1:3773",
-            "cli_installed": True,
-        }
-
-        # 1) OpenMausBot not installed -> hide rebalance/maus actions, optimize solo T3 Code verdict strip
-        html_no_maus = render_cockpit_page(
-            runtime=sec,
-            csrf_token="csrf-1",
+        sec_notify = RuntimeSecrets(fleet_notify_urls="bark://token@host")
+        html_notify = render_cockpit_page(
+            runtime=sec_notify,
+            csrf_token="csrf-n",
             awaiting=[],
             others=[],
             pools=[],
             advisor=[],
-            bridges=[t3_live_card, card],
+            bridges=[agy_live_card],
             repos=[],
             routing=routing,
             capabilities={"wakeup_cli": True, "gcp_sync_cli": True},
-            lang="zh",
+            lang="en",
         )
-        self.assertNotIn("/api/rebalance", html_no_maus)
-        self.assertNotIn("/api/maus-pair", html_no_maus)
-        self.assertNotIn("/api/sync-maus-team", html_no_maus)
-        self.assertNotIn(f'href="{sec.openmausbot_url}"', html_no_maus)
-        self.assertIn("copyModelId", html_no_maus)
-        self.assertIn("http://127.0.0.1:3773", html_no_maus)
-        self.assertIn("/api/wakeup", html_no_maus)
+        self.assertIn("Test Alert", html_notify)
+        self.assertIn("/api/notify-test", html_notify)
 
-        # 2) OpenMausBot desktop app running without CLI -> keep Open UI link, hide CLI buttons
-        maus_app_only = {
-            "id": "openmausbot",
-            "name": "OpenMausBot",
-            "tone": "live",
-            "status": "Running",
-            "detail": "desktop app",
-            "action_url": "http://127.0.0.1:8799",
-            "cli_installed": False,
-            "bot_count": None,
-        }
-        html_app_only = render_cockpit_page(
-            runtime=RuntimeSecrets(),
-            csrf_token="csrf-2",
-            awaiting=[],
-            others=[],
-            pools=[],
-            advisor=[],
-            bridges=[t3_live_card, maus_app_only],
-            repos=[],
-            routing=routing,
-            capabilities={"wakeup_cli": True, "gcp_sync_cli": True},
-        )
-        self.assertIn('href="http://127.0.0.1:8799"', html_app_only)
-        self.assertNotIn("/api/rebalance", html_app_only)
-        self.assertNotIn("/api/maus-pair", html_app_only)
-        self.assertNotIn("/api/sync-maus-team", html_app_only)
-
-        # 3) OpenMausBot CLI live with 0 bots -> show pair + sync-team, hide rebalance
-        maus_zero_bots = {
-            "id": "openmausbot",
-            "name": "OpenMausBot",
-            "tone": "live",
-            "status": "Running 0 Bots",
-            "detail": "0 bots",
-            "action_url": "http://127.0.0.1:8799",
-            "cli_installed": True,
-            "bot_count": 0,
-        }
-        html_zero_bots = render_cockpit_page(
-            runtime=RuntimeSecrets(),
-            csrf_token="csrf-3",
-            awaiting=[],
-            others=[],
-            pools=[],
-            advisor=[],
-            bridges=[t3_live_card, maus_zero_bots],
-            repos=[],
-            routing=routing,
-            capabilities={"wakeup_cli": True, "gcp_sync_cli": True},
-        )
-        self.assertIn("/api/sync-maus-team", html_zero_bots)
-        self.assertIn("/api/maus-pair", html_zero_bots)
-        self.assertNotIn("/api/rebalance", html_zero_bots)
-
-        # 4) Minimal install without optional CLIs or notify config -> hide missing CLI / notify actions
         html_minimal = render_cockpit_page(
             runtime=RuntimeSecrets(),
             csrf_token="csrf-4",
@@ -901,19 +738,15 @@ class TestFleetHub(unittest.TestCase):
                 {"severity": "info", "pool": "5h", "title": "Wakeup", "action": "Run", "command": "ultra wakeup"},
                 {"severity": "info", "pool": "GCP", "title": "Sync", "action": "Run", "command": "ultra sync-gcp-credits"},
             ],
-            bridges=[
-                {"id": "t3code", "name": "T3 Code", "tone": "muted", "status": "Not Installed", "detail": "-", "action_url": "", "cli_installed": False},
-                card,
-            ],
+            bridges=[agy_live_card],
             repos=[],
             routing=routing,
             capabilities={"wakeup_cli": False, "gcp_sync_cli": False},
+            lang="en",
         )
         self.assertNotIn("/api/wakeup", html_minimal)
         self.assertNotIn("/api/sync-gcp-credits", html_minimal)
         self.assertNotIn("/api/notify-test", html_minimal)
-        self.assertNotIn("/api/t3-pair", html_minimal)
-        self.assertNotIn('href="http://127.0.0.1:3773"', html_minimal)
 
     def test_github_star_prompt_and_confetti_flow(self) -> None:
         sec = RuntimeSecrets()
@@ -984,7 +817,7 @@ class TestFleetHub(unittest.TestCase):
                     with urllib.request.urlopen(f"http://127.0.0.1:{port}/?lang=zh", timeout=5) as resp_html:
                         page = resp_html.read().decode("utf-8")
                         self.assertIn('id="starPrompt"', page)
-                        self.assertIn('id="btnTopStar"', page)
+                        self.assertNotIn('id="btnTopStar"', page)
                         self.assertIn("celebrateConfetti", page)
                         self.assertIn("isMatureEnough", page)
                         self.assertIn("waitForVisibleAttention", page)
@@ -1356,6 +1189,229 @@ class TestFleetHub(unittest.TestCase):
             )
             self.assertIn("source-badge stale", html_stale)
             self.assertIn("23,374 积分可用", html_stale)
+
+    def test_update_checker_and_self_update_endpoints(self) -> None:
+        self.assertGreater(parse_semver("v3.1.0"), parse_semver("3.0.0"))
+        self.assertGreater(parse_semver("v3.0.1"), parse_semver("3.0.0"))
+        self.assertEqual(parse_semver("v3.0.0"), (3, 0, 0))
+
+        with tempfile.TemporaryDirectory(prefix="fleet-upd-test-") as td:
+            root = Path(td)
+            fake_repo = root / "repo"
+            (fake_repo / ".git").mkdir(parents=True)
+            ai_hub = root / "AI-Projects"
+            ai_hub.mkdir()
+            db = FleetDB(root / "fleet.db")
+            secrets = RuntimeSecrets()
+
+            local_clean = {
+                "version": "3.0.0",
+                "is_git": True,
+                "sha": "aaaa1111bbbb2222",
+                "short_sha": "aaaa111",
+                "branch": "main",
+                "dirty": False,
+            }
+
+            # 1) Newer GitHub Release -> channel="release", second call hits 6h SQLite cache
+            api_calls: list[str] = []
+
+            def fake_github_release(url: str, _secrets: RuntimeSecrets, timeout: float = 8.0):
+                api_calls.append(url)
+                if url.endswith("/releases/latest"):
+                    return (
+                        200,
+                        {
+                            "tag_name": "v3.1.0",
+                            "name": "v3.1.0 Spatial Observatory",
+                            "body": "## Highlights\n- Faster probes",
+                            "html_url": "https://github.com/IMYin/google-ultra-maximizer/releases/tag/v3.1.0",
+                        },
+                    )
+                if url.endswith("/commits/main"):
+                    return (
+                        200,
+                        {
+                            "sha": "cccc3333dddd4444",
+                            "commit": {"message": "release: v3.1.0"},
+                            "html_url": "https://github.com/IMYin/google-ultra-maximizer/commit/cccc3333",
+                        },
+                    )
+                return (200, {"status": "ahead", "ahead_by": 1})
+
+            with (
+                mock.patch("fleet_hub.updater.get_local_repo_info", return_value=local_clean),
+                mock.patch("fleet_hub.updater._github_get_json", side_effect=fake_github_release),
+                mock.patch("fleet_hub.updater._run_git", return_value=mock.Mock(returncode=1, stdout="", stderr="")),
+            ):
+                res1 = check_for_updates(db, secrets, force=True, repo_root=fake_repo)
+                res2 = check_for_updates(db, secrets, force=False, repo_root=fake_repo)
+
+            self.assertTrue(res1["ok"])
+            self.assertTrue(res1["update_available"])
+            self.assertEqual(res1["channel"], "release")
+            self.assertEqual(res1["target_ref"], "v3.1.0")
+            self.assertEqual(res2["target_ref"], "v3.1.0")
+            self.assertEqual(len(api_calls), 3)  # second call reused SQLite cache
+
+            # 2) Local HEAD ahead of origin/main (merge-base --is-ancestor rc=0) & no newer release -> no false positive
+            def fake_github_no_release(url: str, _secrets: RuntimeSecrets, timeout: float = 8.0):
+                if url.endswith("/releases/latest"):
+                    return (404, None)
+                if url.endswith("/commits/main"):
+                    return (
+                        200,
+                        {
+                            "sha": "0000111122223333",
+                            "commit": {"message": "old upstream"},
+                            "html_url": "https://github.com/IMYin/google-ultra-maximizer/commit/00001111",
+                        },
+                    )
+                raise AssertionError(f"compare should not run when remote is ancestor: {url}")
+
+            with (
+                mock.patch("fleet_hub.updater.get_local_repo_info", return_value=local_clean),
+                mock.patch("fleet_hub.updater._github_get_json", side_effect=fake_github_no_release),
+                mock.patch("fleet_hub.updater._run_git", return_value=mock.Mock(returncode=0, stdout="", stderr="")),
+            ):
+                res_ahead = check_for_updates(db, secrets, force=True, repo_root=fake_repo)
+
+            self.assertTrue(res_ahead["ok"])
+            self.assertFalse(res_ahead["update_available"])
+            self.assertEqual(res_ahead["channel"], "up_to_date")
+
+            # 3) No newer release, upstream main ahead by 2 commits -> channel="commit", behind_count=2
+            def fake_github_commit_behind(url: str, _secrets: RuntimeSecrets, timeout: float = 8.0):
+                if url.endswith("/releases/latest"):
+                    return (200, {"tag_name": "v3.0.0", "name": "v3.0.0", "body": ""})
+                if url.endswith("/commits/main"):
+                    return (
+                        200,
+                        {
+                            "sha": "eeee5555ffff6666",
+                            "commit": {"message": "fix: tighten telemetry cache"},
+                            "html_url": "https://github.com/IMYin/google-ultra-maximizer/commit/eeee5555",
+                        },
+                    )
+                if "/compare/" in url:
+                    return (200, {"status": "ahead", "ahead_by": 2})
+                return (404, None)
+
+            with (
+                mock.patch("fleet_hub.updater.get_local_repo_info", return_value=local_clean),
+                mock.patch("fleet_hub.updater._github_get_json", side_effect=fake_github_commit_behind),
+                mock.patch("fleet_hub.updater._run_git", return_value=mock.Mock(returncode=1, stdout="", stderr="")),
+            ):
+                res_behind = check_for_updates(db, secrets, force=True, repo_root=fake_repo)
+
+            self.assertTrue(res_behind["update_available"])
+            self.assertEqual(res_behind["channel"], "commit")
+            self.assertEqual(res_behind["behind_count"], 2)
+
+            # 4) Dirty working tree blocks perform_self_update before invoking git pull
+            dirty_local = dict(local_clean, dirty=True)
+            with (
+                mock.patch("fleet_hub.updater.get_local_repo_info", return_value=dirty_local),
+                mock.patch("fleet_hub.updater._run_git") as mock_git_dirty,
+            ):
+                ok_dirty, msg_dirty, extra_dirty = perform_self_update(
+                    db, secrets, repo_root=fake_repo, schedule_restart=False
+                )
+            self.assertFalse(ok_dirty)
+            self.assertFalse(extra_dirty["updated"])
+            self.assertIn("未提交", msg_dirty)
+            mock_git_dirty.assert_not_called()
+
+            # 5) Clean working tree runs git fetch + pull --ff-only, clears cache, logs SELF_UPDATED
+            git_calls: list[list[str]] = []
+
+            def fake_pull_git(_root: Path, args: list[str], **_kwargs):
+                git_calls.append(list(args))
+                if args[:2] == ["rev-parse", "HEAD"]:
+                    return mock.Mock(returncode=0, stdout="eeee5555ffff6666\n", stderr="")
+                return mock.Mock(returncode=0, stdout="Updating aaaa111..eeee555\n", stderr="")
+
+            with (
+                mock.patch("fleet_hub.updater.get_local_repo_info", return_value=local_clean),
+                mock.patch("fleet_hub.updater._run_git", side_effect=fake_pull_git),
+                mock.patch("fleet_hub.updater._sync_existing_skills"),
+                mock.patch("fleet_hub.updater.manage_service", return_value=(False, "stopped")),
+            ):
+                ok_upd, msg_upd, extra_upd = perform_self_update(
+                    db, secrets, repo_root=fake_repo, schedule_restart=True
+                )
+
+            self.assertTrue(ok_upd)
+            self.assertTrue(extra_upd["updated"])
+            self.assertFalse(extra_upd["restarting"])
+            self.assertEqual(extra_upd["from_sha"], "aaaa111")
+            self.assertEqual(extra_upd["to_sha"], "eeee555")
+            self.assertIn("eeee555", msg_upd)
+            self.assertEqual([c[0] for c in git_calls], ["fetch", "pull", "rev-parse"])
+            self.assertIn("--ff-only", git_calls[1])
+            self.assertEqual(db.get_meta("telemetry_update_check_json", "sentinel"), "")
+            self.assertTrue(
+                any("SELF_UPDATED" in ev.values() for ev in db.recent_events(limit=10))
+            )
+
+            # 6) Cockpit HTTP endpoints + rendered HTML check
+            fake_snap = {"pools": [], "advisor": [], "bridges": [], "lens": None}
+            c = CockpitServer(db, ai_hub, port=0)
+            port = c.server.server_address[1]
+            t = threading.Thread(target=c.serve_forever, daemon=True)
+            t.start()
+            try:
+                with mock.patch("fleet_hub.cockpit.check_for_updates", return_value=res_behind):
+                    with urllib.request.urlopen(
+                        f"http://127.0.0.1:{port}/api/update-status?force=1", timeout=5
+                    ) as resp_get:
+                        payload_get = json.loads(resp_get.read().decode("utf-8"))
+                        self.assertTrue(payload_get["update_available"])
+                        self.assertEqual(payload_get["channel"], "commit")
+                        self.assertEqual(payload_get["behind_count"], 2)
+
+                req_bad = urllib.request.Request(
+                    f"http://127.0.0.1:{port}/api/self-update",
+                    data=json.dumps({"csrf": "wrong"}).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with self.assertRaises(urllib.error.HTTPError) as ctx_bad:
+                    urllib.request.urlopen(req_bad, timeout=5)
+                self.assertEqual(ctx_bad.exception.code, 403)
+
+                with mock.patch(
+                    "fleet_hub.cockpit.perform_self_update",
+                    return_value=(True, "已更新至 eeee555", {"updated": True, "restarting": False}),
+                ):
+                    req_ok = urllib.request.Request(
+                        f"http://127.0.0.1:{port}/api/self-update",
+                        data=json.dumps({"csrf": c.csrf_token}).encode("utf-8"),
+                        headers={"Content-Type": "application/json"},
+                        method="POST",
+                    )
+                    with urllib.request.urlopen(req_ok, timeout=5) as resp_post:
+                        payload_post = json.loads(resp_post.read().decode("utf-8"))
+                        self.assertTrue(payload_post["ok"])
+                        self.assertTrue(payload_post["updated"])
+
+                with (
+                    mock.patch("fleet_hub.cockpit.collect_cockpit_snapshot", return_value=fake_snap),
+                    mock.patch(
+                        "fleet_hub.cockpit.check_github_starred",
+                        return_value={"ok": True, "repo": "IMYin/google-ultra-maximizer", "url": "https://github.com/IMYin/google-ultra-maximizer", "gh_available": True, "starred": False},
+                    ),
+                ):
+                    with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=10) as resp_html:
+                        page_html = resp_html.read().decode("utf-8")
+                self.assertIn('id="updatePrompt"', page_html)
+                self.assertIn('id="btnCheckUpdate"', page_html)
+                self.assertIn("runSelfUpdate", page_html)
+                self.assertIn("checkForUpdates", page_html)
+                self.assertIn("update_preview", page_html)
+            finally:
+                c.shutdown()
+                t.join(timeout=2)
 
 
 if __name__ == "__main__":
