@@ -579,7 +579,9 @@ _CSS_BLOCK = """
     padding: 2px 8px;
     border-radius: 999px;
     font-weight: 600;
-    white-space: nowrap;
+    white-space: normal;
+    line-height: 1.3;
+    overflow-wrap: anywhere;
     max-width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -724,6 +726,7 @@ _CSS_BLOCK = """
     justify-content: space-between;
     gap: 9px;
   }
+  .vb-tile > div { min-width: 0; }
   .vb-tile.tone-warn { border-color: var(--danger); }
   .tile-top {
     display: flex;
